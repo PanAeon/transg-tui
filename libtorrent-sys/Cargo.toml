@@ -1,0 +1,17 @@
+[package]
+name = "libtorrent-sys"
+description = "cxx bindings to libtorrent"
+version = "0.1.0"
+authors = ["Nicolas Chevalier <nicolas.chevalier@enicom.org>"]
+edition = "2018"
+license = "MIT"
+keywords = ["torrent", "magnet"]
+links = "torrent-rasterbar"
+build = "src/build.rs"
+repository = "https://github.com/shawone/libtorrent-sys"
+
+[dependencies]
+cxx = "1.0"
+
+[build-dependencies]
+cxx-build = "1.0.0"

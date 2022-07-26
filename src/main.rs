@@ -16,7 +16,7 @@ use crossterm::{
 use thiserror::Error;
 use tokio::sync::mpsc::{Sender, Receiver};
 use torrent_stats::{update_torrent_stats, TorrentGroupStats, VERIFYING, DOWNLOADING, SEED_QUEUED};
-use transmission::{SessionStats, TorrentInfo};
+use transmission::{SessionStats, TorrentInfo, TorrentDetails};
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -27,7 +27,8 @@ use tui::{
     },
     Frame, Terminal,
 };
-use utils::{format_download_speed, format_eta, format_percent_done, format_size, format_status, process_folder, STOPPED, VERIFY_QUEUED, DOWN_QUEUED, SEEDING};
+use tui_tree_widget::{Tree, TreeState, TreeItem, get_identifier_without_leaf, flatten};
+use utils::{format_download_speed, format_eta, format_percent_done, format_size, format_status, process_folder, STOPPED, VERIFY_QUEUED, DOWN_QUEUED, SEEDING, build_file_tree};
 
 
 #[derive(Error, Debug)]
@@ -56,7 +57,8 @@ pub enum Transition {
     Filter,
     Search,
     ConfirmRemove(bool),
-    Move
+    Move,
+    Files
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -93,8 +95,8 @@ pub struct App {
     pub main_table_state: TableState,
     pub memory_usage: u64,
     pub torrents: HashMap<i64, TorrentInfo>,
-//    pub filtered_torrents: Vec<TorrentInfo>, // Y torrent_info, can I use just id? hmm, then (almost not) expensive lookup. hmm, letz try
-    pub filtered_torrents: Vec<i64>,
+    pub filtered_torrents: Vec<TorrentInfo>,
+  //  pub filtered_torrents: Vec<i64>, strange, no use..?
     pub free_space: u64,
     pub stats: SessionStats,
     pub groups: TorrentGroupStats,
@@ -103,7 +105,10 @@ pub struct App {
     pub current_filter: Filter,
     pub upload_data: Vec<u64>,
     pub num_active: usize,
-    pub input: String
+    pub input: String,
+    pub tree_state: TreeState,
+    pub details: Option<TorrentDetails>,
+//    pub tree_items: Vec<TreeItem<'a>>
 }
 
 impl Default for App {
@@ -134,7 +139,9 @@ impl Default for App {
             current_filter: Filter::Recent,
             upload_data: vec![],
             num_active: 0,
-            input: "".to_string()
+            input: "".to_string(),
+            tree_state: TreeState::default(),
+            details: None
         }
     }
 }
@@ -162,13 +169,16 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App, mut rx: Receive
                                         if selected >= amount_pets - 1 {
                                             app.main_table_state.select(Some(0));
                                             app.selected = Some(app.filtered_torrents[0].clone());
+                                            sender.blocking_send(TorrentCmd::Select(Some(app.filtered_torrents[0].id))).expect("foo");
                                         } else {
                                             app.main_table_state.select(Some(selected + 1));
                                             app.selected = Some(app.filtered_torrents[selected + 1].clone());
+                                            sender.blocking_send(TorrentCmd::Select(Some(app.filtered_torrents[selected + 1].id))).expect("foo");
                                         }
                                     } else {
                                         app.main_table_state.select(Some(0));
                                         app.selected = Some(app.filtered_torrents[0].clone());
+                                        sender.blocking_send(TorrentCmd::Select(Some(app.filtered_torrents[0].id))).expect("foo");
                                     }
                                 }
                                 KeyCode::Up | KeyCode::Char('k') => {
@@ -179,14 +189,20 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App, mut rx: Receive
                                         if selected > 0 {
                                             app.main_table_state.select(Some(selected - 1));
                                             app.selected = Some(app.filtered_torrents[selected - 1].clone());
+                                            sender.blocking_send(TorrentCmd::Select(Some(app.filtered_torrents[selected - 1].id))).expect("foo");
                                         } else {
                                             app.main_table_state.select(Some(amount_pets - 1));
                                             app.selected = Some(app.filtered_torrents[amount_pets - 1].clone());
+                                            sender.blocking_send(TorrentCmd::Select(Some(app.filtered_torrents[amount_pets - 1].id))).expect("foo");
                                         }
                                     } else {
                                         app.main_table_state.select(Some(0));
                                         app.selected = Some(app.filtered_torrents[0].clone());
+                                        sender.blocking_send(TorrentCmd::Select(Some(app.filtered_torrents[0].id))).expect("foo");
                                     }
+                                    } else {
+                                        app.selected = None;
+                                        sender.blocking_send(TorrentCmd::Select(None)).expect("foo");
                                     }
                                 }
                                 KeyCode::Char('f') => {
@@ -195,6 +211,9 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App, mut rx: Receive
                                 }
                                 KeyCode::Char('s') | KeyCode::Char('/') => {
                                     app.transition = Transition::Search;
+                                }
+                                KeyCode::Char('g') => {
+                                  app.transition = Transition::Files;
                                 }
                                 KeyCode::Esc => {
                                     if let Filter::Search(_) = app.current_filter {
@@ -448,11 +467,27 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App, mut rx: Receive
                             _ => {}
 
                         }
+                        Transition::Files => match event.code {
+                            KeyCode::Esc  => app.transition = Transition::MainScreen,
+                            KeyCode::Left => {
+                                let selected = app.tree_state.selected();
+        if !app.tree_state.close(&selected) {
+            let (head, _) = get_identifier_without_leaf(&selected);
+            app.tree_state.select(head);
+        }
+                            }
+                KeyCode::Right => { app.tree_state.open(app.tree_state.selected());}
+                KeyCode::Enter => app.tree_state.toggle(),
+                KeyCode::Down => move_up_down(&mut app, true),
+                KeyCode::Up => move_up_down(&mut app, false),
+                _ => {}
+                        }
                     }
                 }
             },
 
-            Some(TorrentUpdate::Partial(json, removed, _i, session_stats, free_space_opt, mem)) => {
+            Some(TorrentUpdate::Partial(json, removed, _i, session_stats, free_space_opt, mem, details)) => {
+                app.details = *details;
                 if let Some(s) = *session_stats {
                     if app.upload_data.len() > 200 {
                       app.upload_data.pop();
@@ -523,6 +558,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App, mut rx: Receive
                 if !app.filtered_torrents.is_empty() && app.main_table_state.selected().is_none()  {
                         app.main_table_state.select(Some(0));
                         app.selected = Some(app.filtered_torrents[0].clone());
+                        sender.blocking_send(TorrentCmd::Select(Some(app.filtered_torrents[0].id))).expect("foo");
                 }
             }
             Some(TorrentUpdate::Full(xs)) => {
@@ -552,6 +588,36 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App, mut rx: Receive
             None => {} // exit app, no more updates
         }
     }
+}
+
+ fn move_up_down(app: &mut App, down: bool) {
+    let items = vec![
+                TreeItem::new_leaf("a"),
+                TreeItem::new(
+                    "b",
+                    vec![
+                        TreeItem::new_leaf("c"),
+                        TreeItem::new("d", vec![TreeItem::new_leaf("e"), TreeItem::new_leaf("f")]),
+                        TreeItem::new_leaf("g"),
+                    ],
+                ),
+                TreeItem::new_leaf("h"),
+            ]; 
+        let visible = flatten(&app.tree_state.get_all_opened(), &items);
+        let current_identifier = app.tree_state.selected();
+        let current_index = visible
+            .iter()
+            .position(|o| o.identifier == current_identifier);
+        let new_index = current_index.map_or(0, |current_index| {
+            if down {
+                current_index.saturating_add(1)
+            } else {
+                current_index.saturating_sub(1)
+            }
+            .min(visible.len() - 1)
+        });
+        let new_identifier = visible.get(new_index).unwrap().identifier.clone();
+        app.tree_state.select(new_identifier);
 }
 
 impl From<MenuItem> for usize {
@@ -731,9 +797,47 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
             move_dialog(frame, &x.name, &app.folder_mapping);
         }
     }
+    Transition::Files => {
+        if let Some(details) = &app.details {
+            let area = centered_rect(70, 80, size);
+            let block = draw_tree(details);
+            frame.render_widget(Clear, area); //this clears out the background
+            frame.render_stateful_widget(block, area, &mut app.tree_state); //this clears out the background
+        }
+    }
     _ => {}
     }
     // restore terminal
+}
+
+fn draw_tree<'a>(details: &'a TorrentDetails) -> Tree<'a> {
+    let items = build_file_tree(&details.files);
+    /*let items = vec![
+                TreeItem::new_leaf("a"),
+                TreeItem::new(
+                    "b",
+                    vec![
+                        TreeItem::new_leaf("c"),
+                        TreeItem::new("d", vec![TreeItem::new_leaf("e"), TreeItem::new_leaf("f")]),
+                        TreeItem::new_leaf("g"),
+                    ],
+                ),
+                TreeItem::new_leaf("h"),
+            ];*/
+
+     Tree::new(items)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Tree Widget "),
+                )
+                .highlight_style(
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::LightGreen)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .highlight_symbol(">> ")
 }
 
 
@@ -913,7 +1017,7 @@ fn render_main_table<'a>(
             Block::default()
                 .borders(Borders::ALL)
                 .style(Style::default().fg(Color::White))
-                .title("Detail")
+                .title("Darlings")
                 .border_type(BorderType::Plain),
         )
         .widths(&[

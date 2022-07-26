@@ -21,6 +21,7 @@ pub enum TorrentUpdate {
         Box<Option<SessionStats>>,
         Option<FreeSpace>,
         u64,
+        Box<Option<TorrentDetails>>
     ),
     Details(Box<TorrentDetails>),
     Input(KeyEvent),
@@ -35,6 +36,7 @@ pub enum TorrentCmd {
     OpenDlDir(i64),
     OpenDlTerm(i64),
     GetDetails(i64),
+    Select(Option<i64>),
     QueueMoveUp(Vec<i64>),
     QueueMoveDown(Vec<i64>),
     QueueMoveTop(Vec<i64>),
@@ -168,6 +170,9 @@ impl CommandProcessor {
                                 .await
                                 .expect("send events");
                         }
+                        TorrentCmd::Select(maybe_id) => {
+                            details_id = maybe_id;
+                        }
                         TorrentCmd::GetDetails(id) => {
                             details_id = Some(id);
                             let details = client.get_torrent_details(vec![id]).await.expect("oops3"); // TODO: what if id is wrong?
@@ -210,6 +215,13 @@ impl CommandProcessor {
                             // .expect("foo");
 
                             let mem = page_size * (me_mem.resident - me_mem.shared);
+                            let mut maybe_details: Option<TorrentDetails> = None;
+                            if let Some(id) = details_id {
+                                let details = client.get_torrent_details(vec![id]).await.expect("oops3"); // TODO: what if id is wrong?
+                                if !details.arguments.torrents.is_empty() {
+                                     maybe_details = Some(details.arguments.torrents[0].to_owned());
+                                }
+                            }
                             update_sender
                                 .send(TorrentUpdate::Partial(
                                     torrents,
@@ -218,21 +230,11 @@ impl CommandProcessor {
                                     Box::new(session_stats),
                                     free_space,
                                     mem,
+                                    Box::new(maybe_details)
                                 ))
                                 .await
                                 .expect("blah");
                             //}
-                            if let Some(id) = details_id {
-                                let details = client.get_torrent_details(vec![id]).await.expect("oops3"); // TODO: what if id is wrong?
-                                if !details.arguments.torrents.is_empty() {
-                                    let res = update_sender
-                                        .send(TorrentUpdate::Details(Box::new(details.arguments.torrents[0].to_owned())))
-                                        .await;
-                                    if res.is_err() {
-                                        println!("{:#?}", res.err().unwrap());
-                                    }
-                                }
-                            }
                         }
                         TorrentCmd::OpenDlDir(id) => {
                             let details = client.get_torrent_details(vec![id]).await.expect("oops3"); // TODO: what if id is wrong?

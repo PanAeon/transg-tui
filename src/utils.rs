@@ -1,3 +1,5 @@
+use tui_tree_widget::TreeItem;
+
 //use std::fmt;
 use crate::transmission;
 //use chrono::{DateTime, NaiveDateTime, Utc};
@@ -116,7 +118,7 @@ pub fn format_status<'a>(x: i64) -> &'a str {
         _ => "",
     }
 }
-
+// TODO: write something better..
 pub fn do_build_tree(parent_path: &str, level: usize, xs: Vec<(u64, u64, Vec<String>)>) -> Vec<Node> {
     let mut ns: Vec<Node> = vec![];
 
@@ -156,6 +158,7 @@ pub fn do_build_tree(parent_path: &str, level: usize, xs: Vec<(u64, u64, Vec<Str
     }
     ns
 }
+
 pub fn build_tree(files: &[transmission::File]) -> Vec<Node> {
     let mut xs: Vec<(u64, u64, Vec<String>)> = files
         .iter()
@@ -169,4 +172,56 @@ pub fn build_tree(files: &[transmission::File]) -> Vec<Node> {
         .collect();
     xs.sort_by(|a, b| a.2[0].partial_cmp(&b.2[0]).unwrap());
     do_build_tree("", 0, xs)
+}
+pub fn do_build_file_tree<'a>(parent_path: String, level: usize, xs: Vec<(u64, u64, Vec<String>)>) -> Vec<TreeItem<'a>> {
+    let mut ns: Vec<TreeItem> = vec![];
+
+    let mut parents: Vec<String> = xs
+        .iter()
+        .filter(|x| x.2.len() > level)
+        .map(|x| x.2[level].clone())
+        .collect();
+    parents.sort();
+    parents.dedup();
+
+    for name in parents {
+        let children: Vec<(u64, u64, Vec<String>)> = xs
+            .iter()
+            .filter(|x| x.2.len() > level && x.2[level] == name)
+            .cloned()
+            .collect();
+        let path = if parent_path.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}/{}", parent_path, name)
+        };
+        //let size = children.iter().map(|x| x.0).sum();
+        //let downloaded = children.iter().map(|x| x.1).sum();
+        let cs = if children.len() > 1 {
+            do_build_file_tree(path, level + 1, children)
+        } else {
+            vec![]
+        };
+        ns.push(TreeItem::new(
+            name
+         //   path,
+          //  size,
+          //  downloaded,
+        , cs));
+    }
+    ns
+}
+pub fn build_file_tree(files: &[transmission::File]) -> Vec<TreeItem> {
+    let mut xs: Vec<(u64, u64, Vec<String>)> = files
+        .iter()
+        .map(|f| {
+            (
+                f.length,
+                f.bytes_completed,
+                f.name.split('/').map(String::from).collect(),
+            )
+        })
+        .collect();
+    xs.sort_by(|a, b| a.2[0].partial_cmp(&b.2[0]).unwrap());
+    do_build_file_tree("".to_string(), 0, xs)
 }

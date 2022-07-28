@@ -13,7 +13,6 @@
         devShell = with pkgs;
           mkShell {
             name = "rust-env";
-            nativeBuildInputs = [ wrapGAppsHook ];
             buildInputs = [
               (rust-bin.stable.latest.default.override {
                 extensions = [ "rust-src" ];
@@ -25,7 +24,7 @@
               cargo-generate
               openssl
               rust-bindgen
-              curl
+              #curl
             ];
             LIBCLANG_PATH = pkgs.lib.makeLibraryPath
               [ pkgs.llvmPackages_latest.libclang.lib ];

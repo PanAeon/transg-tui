@@ -190,13 +190,13 @@ impl CommandProcessor {
                             let torrents = resp.get("arguments").unwrap().get("torrents").unwrap().to_owned();
                             let removed = resp.get("arguments").unwrap().get("removed").unwrap().to_owned();
 
-                            let session_stats = if i % 3 == 0 {
+                            //let session_stats = if i % 3 == 0 {
                                 let stats = client.get_session_stats().await.expect("boo");
-                                Some(stats.arguments)
+                                let session_stats = Some(stats.arguments);
                                 //update_sender.send(TorrentUpdate::Stats(stats.arguments)).await.expect("foo");
-                            } else {
-                                None
-                            };
+                            //} else {
+                             //   None
+                            //};
 
                             let free_space = if i % 60 == 0 {
                                 let free_space = client.get_free_space(&remote_base_dir).await.expect("brkjf");

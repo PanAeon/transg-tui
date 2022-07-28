@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use chrono::{NaiveDateTime, DateTime, Utc};
 use tui_tree_widget::TreeItem;
 
 //use std::fmt;
@@ -31,15 +34,14 @@ pub const DOWNLOADING: i64 = 4;
 pub const SEED_QUEUED: i64 = 5;
 pub const SEEDING: i64 = 6;
 
-pub fn process_folder(s: &str) -> String {
+pub fn process_folder(s: &str, base_dir: &str) -> String {
+    let mut s = s.replace(base_dir, "");
+    if s.starts_with('/') {
+        s = s.strip_prefix('/').expect("prefix").to_string();
+    }
     let parts: Vec<&str> = s.split('/').collect();
     if parts.len() > 1 {
-        if parts[parts.len() - 2] == "Downloads" {
-            // FIXME: not generic enough
-            parts[parts.len() - 1].to_string()
-        } else {
-            format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1])
-        }
+        format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1])
     } else {
         s.to_string()
     }
@@ -75,11 +77,11 @@ pub fn format_download_speed(i: i64, hide_zero: bool) -> String {
         format!("{: >5.1} K/s", i as f64 / 1024.0)
     }
 }
-/*pub fn format_time(i: u64) -> String {
+pub fn format_time(i: u64) -> String {
     let naive = NaiveDateTime::from_timestamp(i.try_into().expect("can't convert from u64 into i64"), 0);
     let datetime: DateTime<Utc> = DateTime::from_utc(naive, Utc);
     datetime.format("%Y-%m-%d %H:%M:%S").to_string()
-}*/
+}
 
 pub fn format_eta(secs: i64) -> String {
     if secs == -1 {
@@ -106,9 +108,13 @@ pub fn format_eta(secs: i64) -> String {
     }
 }
 
-pub fn format_status<'a>(x: i64) -> &'a str {
+pub fn format_status<'a>(x: i64, err: i64) -> &'a str {
+    if err != 0 {
+        " ⁈"
+
+    } else {
     match x {
-        STOPPED => " ⛔",
+        STOPPED => " ⏸ ",
         VERIFY_QUEUED => " 🗘",
         VERIFYING => " 🗘",
         DOWN_QUEUED => " ⇩",
@@ -116,6 +122,7 @@ pub fn format_status<'a>(x: i64) -> &'a str {
         SEED_QUEUED => " ⇧",
         SEEDING => " ⇡",
         _ => "",
+    }
     }
 }
 // TODO: write something better..
@@ -195,7 +202,7 @@ pub fn do_build_file_tree<'a>(parent_path: String, level: usize, xs: Vec<(u64, u
         } else {
             format!("{}/{}", parent_path, name)
         };
-        //let size = children.iter().map(|x| x.0).sum();
+        let size: u64 = children.iter().map(|x| x.0).sum();
         //let downloaded = children.iter().map(|x| x.1).sum();
         let cs = if children.len() > 1 {
             do_build_file_tree(path, level + 1, children)
@@ -203,7 +210,7 @@ pub fn do_build_file_tree<'a>(parent_path: String, level: usize, xs: Vec<(u64, u
             vec![]
         };
         ns.push(TreeItem::new(
-            name
+            format!("{} - {}", name, crate::utils::format_size(size as i64))
          //   path,
           //  size,
           //  downloaded,
@@ -211,7 +218,8 @@ pub fn do_build_file_tree<'a>(parent_path: String, level: usize, xs: Vec<(u64, u
     }
     ns
 }
-pub fn build_file_tree(files: &[transmission::File]) -> Vec<TreeItem> {
+pub fn build_file_tree<'a>(files: Vec<transmission::File>) -> Vec<TreeItem<'a>> {
+    let mut strings: HashMap<u64, &str> = HashMap::new();
     let mut xs: Vec<(u64, u64, Vec<String>)> = files
         .iter()
         .map(|f| {

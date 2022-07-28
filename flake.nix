@@ -62,7 +62,9 @@
               maintainers = [ ];
             };
           };#) { };
-        defaultPackage = packages.transgression-tui;
+        packages.default = packages.transgression-tui;
+        apps.transg-tui = flake-utils.lib.mkApp { drv = packages.transgression-tui; exePath = "/bin/transgression-tui"; };
+        apps.default = apps.transg-tui;
       });
 
 }

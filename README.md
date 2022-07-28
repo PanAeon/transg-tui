@@ -16,6 +16,15 @@ Dependencies:
 cargo build --release
 ```
 
+### NIX
+```bash
+nix build
+```
+or
+```bash
+nix run github:PanAeon/transg-tui
+```
+
 ## Configuration
 
 Configuration file uses JSON and is located at `~/.config/transg/config.json`

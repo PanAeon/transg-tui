@@ -10,7 +10,7 @@ Transmission remote TUI client.
 Dependencies:
 * rustc   >= 1.62
 * cargo   >= 1.62
-* openssl  = 1.1.0
+* openssl  >= 1.1.0
 
 ```bash
 cargo build --release
@@ -21,7 +21,7 @@ cargo build --release
 Configuration file uses JSON and is located at `~/.config/transg/config.json`
 
 Example config:
-```
+```json
 {
   "connection_name": "localhost",
   "connection_string": "http://127.0.0.1:9091/transmission/rpc",

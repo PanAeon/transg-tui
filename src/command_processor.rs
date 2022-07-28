@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::notification_utils::notify;
-use crate::transmission::{FreeSpace, SessionStats, TorrentAdd, TorrentDetails, TransmissionClient};
+use crate::transmission::{FreeSpace, Result, SessionStats, TorrentAdd, TorrentDetails, TransmissionClient};
 use crate::utils::build_tree;
 use crossterm::event::{self, KeyEvent};
 use lazy_static::lazy_static;
@@ -21,18 +21,21 @@ pub enum TorrentUpdate {
         Box<Option<SessionStats>>,
         Option<FreeSpace>,
         u64,
-        Box<Option<TorrentDetails>>
+        Box<Option<TorrentDetails>>,
     ),
     Details(Box<TorrentDetails>),
     Input(KeyEvent),
     UiTick,
+    Err {
+        msg: String,
+        details: String,
+    },
 }
 
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum TorrentCmd {
     Tick(u64),
-    UiTick(),
     OpenDlDir(i64),
     OpenDlTerm(i64),
     GetDetails(i64),
@@ -47,7 +50,6 @@ pub enum TorrentCmd {
     Stop(Vec<i64>),
     Verify(Vec<i64>),
     Reannounce(Vec<i64>),
-    Input(KeyEvent),
     Move(Vec<i64>, String, bool),
     AddTorrent(Option<String>, Option<String>, Option<String>, bool), // download dir, filename, metainfo, start_paused
                                                                       //PoisonPill()
@@ -86,8 +88,8 @@ pub struct CommandProcessor {
 
 impl CommandProcessor {
     pub fn create() -> (Self, mpsc::Receiver<TorrentUpdate>) {
-        let (sender, receiver) = mpsc::channel(2048);
-        let (update_sender, update_receiver) = mpsc::channel(2048);
+        let (sender, receiver) = mpsc::channel(1024);
+        let (update_sender, update_receiver) = mpsc::channel(1024);
         (
             CommandProcessor {
                 receiver: Some(receiver),
@@ -102,14 +104,11 @@ impl CommandProcessor {
         self.sender.clone()
     }
 
-    //  pub fn stop(&self) {
-    //    self.sender.blocking_send(TorrentCmd::PoisonPill()).expect("can't stop..");
-    //}
-
     pub fn run(&mut self, config: Config, ping: bool, notify_on_add: bool) {
         let sender = self.sender.clone();
 
         let update_sender = self.update_sender.clone();
+        let update_sender2 = self.update_sender.clone();
         let _receiver = std::mem::replace(&mut self.receiver, None);
         let mut receiver = _receiver.unwrap();
 
@@ -128,12 +127,12 @@ impl CommandProcessor {
 
                     if event::poll(timeout).expect("poll works") {
                         if let event::Event::Key(key) = event::read().expect("can read events") {
-                            sender.send(TorrentCmd::Input(key)).await.expect("can send events");
+                            update_sender2.send(TorrentUpdate::Input(key)).await.expect("can send events");
                         }
                     }
 
                     if last_tick.elapsed() >= tick_rate {
-                        sender.send(TorrentCmd::UiTick()).await.expect("send");
+                        let _ = update_sender2.send(TorrentUpdate::UiTick).await;
                         last_tick = Instant::now();
                     }
 
@@ -148,232 +147,235 @@ impl CommandProcessor {
         });
 
         let transmission_url = config.connection_string.to_string();
-        let remote_base_dir = config.remote_base_dir.to_string();
+        //let remote_base_dir = config.remote_base_dir.to_string();
         std::thread::spawn(move || {
             let rt = Runtime::new().expect("can't create runtime");
             rt.block_on(async move {
                 let client = TransmissionClient::new(&transmission_url);
                 if ping {
-                    let response = client.get_all_torrents(&TORRENT_INFO_FIELDS).await.expect("oops1");
-                    let ts = response.get("arguments").unwrap().get("torrents").unwrap().to_owned();
-                    update_sender.send(TorrentUpdate::Full(ts)).await.expect("blah");
+                    let res = client.get_all_torrents(&TORRENT_INFO_FIELDS).await;
+                    if let Err(error) = res {
+                        update_sender
+                            .send(TorrentUpdate::Err {
+                                msg: "Can't connect to transmission!".to_string(),
+                                details: format!("Please, check connection string and restart the app:\n\n{}",  error),
+                            })
+                            .await
+                            .expect("blah");
+                            return;
+                    } else {
+                        let response = res.unwrap();
+                        let ts = response.get("arguments").unwrap().get("torrents").unwrap().to_owned();
+                        update_sender.send(TorrentUpdate::Full(ts)).await.expect("foo");
+                    }
                 }
                 let mut details_id: Option<i64> = None;
                 loop {
-                    // should move into async
-                    let cmd = receiver.recv().await.expect("probably ticker thread panicked");
-
-                    match cmd {
-                        TorrentCmd::Input(key_event) => {
-                            update_sender
-                                .send(TorrentUpdate::Input(key_event))
-                                .await
-                                .expect("send events");
-                        }
-                        TorrentCmd::Select(maybe_id) => {
-                            details_id = maybe_id;
-                        }
-                        TorrentCmd::GetDetails(id) => {
-                            details_id = Some(id);
-                            let details = client.get_torrent_details(vec![id]).await.expect("oops3"); // TODO: what if id is wrong?
-                            if !details.arguments.torrents.is_empty() {
-                                let res = update_sender
-                                    .send(TorrentUpdate::Details(Box::new(details.arguments.torrents[0].to_owned())))
-                                    .await;
-                                if res.is_err() {
-                                    println!("{:#?}", res.err().unwrap());
-                                }
-                            }
-                        }
-                        TorrentCmd::Tick(i) => {
-                            let resp = client.get_recent_torrents(&TORRENT_INFO_FIELDS).await.expect("oops2");
-                            let torrents = resp.get("arguments").unwrap().get("torrents").unwrap().to_owned();
-                            let removed = resp.get("arguments").unwrap().get("removed").unwrap().to_owned();
-
-                            //let session_stats = if i % 3 == 0 {
-                                let stats = client.get_session_stats().await.expect("boo");
-                                let session_stats = Some(stats.arguments);
-                                //update_sender.send(TorrentUpdate::Stats(stats.arguments)).await.expect("foo");
-                            //} else {
-                             //   None
-                            //};
-
-                            let free_space = if i % 60 == 0 {
-                                let free_space = client.get_free_space(&remote_base_dir).await.expect("brkjf");
-                                Some(free_space.arguments)
-                            } else {
-                                None
-                            };
-
-                            let me = Process::myself().unwrap();
-                            // let me_stat = me.stat().unwrap();
-                            let me_mem = me.statm().unwrap();
-                            let page_size = procfs::page_size().unwrap() as u64;
-                            //update_sender
-                            //   .send(TorrentUpdate::ClientStats { mem: (page_size * (me_mem.resident - me_mem.shared)) })
-                            //  .await
-                            // .expect("foo");
-
-                            let mem = page_size * (me_mem.resident - me_mem.shared);
-                            let mut maybe_details: Option<TorrentDetails> = None;
-                            if let Some(id) = details_id {
-                                let details = client.get_torrent_details(vec![id]).await.expect("oops3"); // TODO: what if id is wrong?
-                                if !details.arguments.torrents.is_empty() {
-                                     maybe_details = Some(details.arguments.torrents[0].to_owned());
-                                }
-                            }
-                            update_sender
-                                .send(TorrentUpdate::Partial(
-                                    torrents,
-                                    removed,
-                                    i,
-                                    Box::new(session_stats),
-                                    free_space,
-                                    mem,
-                                    Box::new(maybe_details)
-                                ))
-                                .await
-                                .expect("blah");
-                            //}
-                        }
-                        TorrentCmd::OpenDlDir(id) => {
-                            let details = client.get_torrent_details(vec![id]).await.expect("oops3"); // TODO: what if id is wrong?
-                            if !details.arguments.torrents.is_empty() {
-                                let location = details.arguments.torrents[0].download_dir.clone();
-                                let my_loc = location.replace(&config.remote_base_dir, &config.local_base_dir);
-                                let me_loc2 = my_loc.clone();
-                                let tree = build_tree(&details.arguments.torrents[0].files);
-                                let p = my_loc + "/" + &tree[0].path;
-                                /*    if tree.len() == 1 && fs::read_dir(&p).is_ok() {
-                                    std::process::Command::new("nautilus")
-                                        .arg(p)
-                                        .spawn()
-                                        .expect("failed to spawn");
-                                } else {
-                                    std::process::Command::new("nautilus")
-                                        .arg(me_loc2)
-                                        .spawn()
-                                        .expect("failed to spawn");
-                                }*/
-                                let l = if tree.len() == 1 && fs::read_dir(&p).is_ok() {
-                                    p
-                                } else {
-                                    me_loc2
-                                };
-                                let mut cmd_builder = std::process::Command::new(config.file_manager.cmd.clone());
-                                for a in &config.file_manager.args {
-                                    let arg = a.replace("{location}", &l);
-                                    cmd_builder.arg(&arg);
-                                }
-                                cmd_builder.spawn().expect("failed to spawn");
-                            }
-                        }
-                        TorrentCmd::OpenDlTerm(id) => {
-                            // TODO: refactor both into single function
-                            let details = client.get_torrent_details(vec![id]).await.expect("oops3"); // TODO: what if id is wrong?
-                            if !details.arguments.torrents.is_empty() {
-                                let location = details.arguments.torrents[0].download_dir.clone();
-                                let my_loc = location.replace(&config.remote_base_dir, &config.local_base_dir);
-                                let me_loc2 = my_loc.clone();
-                                let tree = build_tree(&details.arguments.torrents[0].files);
-                                let p = my_loc + "/" + &tree[0].path;
-                                let l = if tree.len() == 1 && fs::read_dir(&p).is_ok() {
-                                    p
-                                } else {
-                                    me_loc2
-                                };
-                                let mut cmd_builder = std::process::Command::new(config.terminal.cmd.clone());
-                                for a in &config.terminal.args {
-                                    let arg = a.replace("{location}", &l);
-                                    cmd_builder.arg(&arg);
-                                }
-                                cmd_builder.spawn().expect("failed to spawn");
-                            }
-                        }
-                        TorrentCmd::QueueMoveUp(ids) => {
-                            client.queue_move_up(ids).await.expect("oops3"); // TODO: proper error handling
-                        }
-                        TorrentCmd::QueueMoveDown(ids) => {
-                            client.queue_move_down(ids).await.expect("oops3"); // TODO: proper error handling
-                        }
-                        TorrentCmd::QueueMoveTop(ids) => {
-                            client.queue_move_top(ids).await.expect("oops3"); // TODO: proper error handling
-                        }
-                        TorrentCmd::QueueMoveBottom(ids) => {
-                            client.queue_move_bottom(ids).await.expect("oops3");
-                            // TODO: proper error handling
-                        }
-                        TorrentCmd::Delete(ids, delete_local_data) => {
-                            client.torrent_remove(ids, delete_local_data).await.expect("oops3");
-                            // TODO: proper error handling
-                        }
-                        TorrentCmd::Start(ids) => {
-                            client.torrent_start(ids).await.expect("oops3"); // TODO: proper error handling
-                        }
-                        TorrentCmd::StartNow(ids) => {
-                            client.torrent_start_now(ids).await.expect("oops3");
-                            // TODO: proper error handling
-                        }
-                        TorrentCmd::Stop(ids) => {
-                            client.torrent_stop(ids).await.expect("oops3"); // TODO: proper error handling
-                        }
-                        TorrentCmd::Verify(ids) => {
-                            client.torrent_verify(ids).await.expect("oops3"); // TODO: proper error handling
-                        }
-                        TorrentCmd::Reannounce(ids) => {
-                            client.torrent_reannounce(ids).await.expect("oops3");
-                            // TODO: proper error handling
-                        }
-                        TorrentCmd::Move(ids, location, is_move) => {
-                            client.torrent_move(ids, &location, is_move).await.expect("ooph4");
-                        }
-                        TorrentCmd::AddTorrent(download_dir, filename, metainfo, paused) => {
-                            let tadd = TorrentAdd {
-                                cookies: None,
-                                bandwith_priority: None,
-                                download_dir,
-                                filename,
-                                metainfo,
-                                files_unwanted: None,
-                                files_wanted: None,
-                                labels: None,
-                                paused: Some(paused),
-                                peer_limit: None,
-                                priority_high: None,
-                                priority_low: None,
-                                priority_normal: None,
-                            };
-                            println!("adding torrent");
-                            let res = client.torrent_add(&tadd).await.expect("ooph5");
-                            let result = res
-                                .as_object()
-                                .expect("should return object")
-                                .get("result")
-                                .expect("must result")
-                                .as_str()
-                                .unwrap()
-                                .to_string();
-                            if result == "success" {
-                                if notify_on_add {
-                                    let _ = notify("Torrent Added!", "").await; // TODO: add name
-                                }
-                                //    let _ =  notify("Torrent Added!", "").await; // TODO: add name
-                            } else {
-                                if notify_on_add {
-                                    let _ = notify("Error!", "").await;
-                                } else {
-                                    // TODO: add UI notification
-                                }
-                                println!("{:?}", res);
-                            }
-                            //println!("{:?}", res);
-                        } //            TorrentCmd::PoisonPill() => {}
-                        TorrentCmd::UiTick() => {
-                            update_sender.send(TorrentUpdate::UiTick).await.expect("can send");
-                        }
+                    let result = update_step(
+                        &mut receiver,
+                        &update_sender,
+                        &mut details_id,
+                        &client,
+                        &config,
+                        notify_on_add,
+                    )
+                    .await;
+                    if let Err(error) = result {
+                        update_sender
+                            .send(TorrentUpdate::Err {
+                                msg: "Communication failed".to_string(),
+                                details: error.to_string(),
+                            })
+                            .await
+                            .expect("blah");
                     }
                 }
             })
         });
     }
+}
+
+async fn update_step(
+    receiver: &mut mpsc::Receiver<TorrentCmd>,
+    update_sender: &mpsc::Sender<TorrentUpdate>,
+    details_id: &mut Option<i64>,
+    client: &TransmissionClient,
+    config: &Config,
+    notify_on_add: bool,
+) -> Result<()> {
+    let cmd = receiver.recv().await.expect("probably ticker thread panicked");
+
+    match cmd {
+        TorrentCmd::Select(maybe_id) => {
+            *details_id = maybe_id;
+        }
+        TorrentCmd::GetDetails(id) => {
+            *details_id = Some(id);
+            let details = client.get_torrent_details(vec![id]).await?; // TODO: what if id is wrong?
+            if !details.arguments.torrents.is_empty() {
+                let res = update_sender
+                    .send(TorrentUpdate::Details(Box::new(
+                        details.arguments.torrents[0].to_owned(),
+                    )))
+                    .await;
+                if res.is_err() {
+                    println!("{:#?}", res.err().unwrap());
+                }
+            }
+        }
+        TorrentCmd::Tick(i) => {
+            let resp = client.get_recent_torrents(&TORRENT_INFO_FIELDS).await?;
+            let torrents = resp.get("arguments").unwrap().get("torrents").unwrap().to_owned();
+            let removed = resp.get("arguments").unwrap().get("removed").unwrap().to_owned();
+
+            let stats = client.get_session_stats().await?;
+            let session_stats = Some(stats.arguments);
+
+            let free_space = if i % 60 == 0 {
+                let free_space = client.get_free_space(&config.remote_base_dir).await?;
+                Some(free_space.arguments)
+            } else {
+                None
+            };
+
+            let me = Process::myself().unwrap();
+            let me_mem = me.statm().unwrap();
+            let page_size = procfs::page_size().unwrap() as u64;
+
+            let mem = page_size * (me_mem.resident - me_mem.shared);
+            let mut maybe_details: Option<TorrentDetails> = None;
+            if let Some(id) = details_id {
+                let details = client.get_torrent_details(vec![*id]).await?; // TODO: what if id is wrong?
+                if !details.arguments.torrents.is_empty() {
+                    maybe_details = Some(details.arguments.torrents[0].to_owned());
+                }
+            }
+            update_sender
+                .send(TorrentUpdate::Partial(
+                    torrents,
+                    removed,
+                    i,
+                    Box::new(session_stats),
+                    free_space,
+                    mem,
+                    Box::new(maybe_details),
+                ))
+                .await
+                .expect("blah");
+        }
+        TorrentCmd::OpenDlDir(id) => {
+            let details = client.get_torrent_details(vec![id]).await?; // TODO: what if id is wrong?
+            if !details.arguments.torrents.is_empty() {
+                let location = details.arguments.torrents[0].download_dir.clone();
+                let my_loc = location.replace(&config.remote_base_dir, &config.local_base_dir);
+                let me_loc2 = my_loc.clone();
+                let tree = build_tree(&details.arguments.torrents[0].files);
+                let p = my_loc + "/" + &tree[0].path;
+
+                let l = if tree.len() == 1 && fs::read_dir(&p).is_ok() {
+                    p
+                } else {
+                    me_loc2
+                };
+                let mut cmd_builder = std::process::Command::new(config.file_manager.cmd.clone());
+                for a in &config.file_manager.args {
+                    let arg = a.replace("{location}", &l);
+                    cmd_builder.arg(&arg);
+                }
+                cmd_builder.spawn().expect("failed to spawn"); // FIXME: this expect is really unnecessary
+            }
+        }
+        TorrentCmd::OpenDlTerm(id) => {
+            // TODO: refactor both into single function
+            let details = client.get_torrent_details(vec![id]).await?; // TODO: what if id is wrong?
+            if !details.arguments.torrents.is_empty() {
+                let location = details.arguments.torrents[0].download_dir.clone();
+                let my_loc = location.replace(&config.remote_base_dir, &config.local_base_dir);
+                let me_loc2 = my_loc.clone();
+                let tree = build_tree(&details.arguments.torrents[0].files);
+                let p = my_loc + "/" + &tree[0].path;
+                let l = if tree.len() == 1 && fs::read_dir(&p).is_ok() {
+                    p
+                } else {
+                    me_loc2
+                };
+                let mut cmd_builder = std::process::Command::new(config.terminal.cmd.clone());
+                for a in &config.terminal.args {
+                    let arg = a.replace("{location}", &l);
+                    cmd_builder.arg(&arg);
+                }
+                cmd_builder.spawn().expect("failed to spawn");
+            }
+        }
+        TorrentCmd::QueueMoveUp(ids) => {
+            client.queue_move_up(ids).await?; // TODO: proper error handling
+        }
+        TorrentCmd::QueueMoveDown(ids) => {
+            client.queue_move_down(ids).await?; // TODO: proper error handling
+        }
+        TorrentCmd::QueueMoveTop(ids) => {
+            client.queue_move_top(ids).await?; // TODO: proper error handling
+        }
+        TorrentCmd::QueueMoveBottom(ids) => {
+            client.queue_move_bottom(ids).await?;
+        }
+        TorrentCmd::Delete(ids, delete_local_data) => {
+            client.torrent_remove(ids, delete_local_data).await?;
+        }
+        TorrentCmd::Start(ids) => {
+            client.torrent_start(ids).await?; // TODO: proper error handling
+        }
+        TorrentCmd::StartNow(ids) => {
+            client.torrent_start_now(ids).await?;
+        }
+        TorrentCmd::Stop(ids) => {
+            client.torrent_stop(ids).await?; // TODO: proper error handling
+        }
+        TorrentCmd::Verify(ids) => {
+            client.torrent_verify(ids).await?; // TODO: proper error handling
+        }
+        TorrentCmd::Reannounce(ids) => {
+            client.torrent_reannounce(ids).await?;
+        }
+        TorrentCmd::Move(ids, location, is_move) => {
+            client.torrent_move(ids, &location, is_move).await?;
+        }
+        TorrentCmd::AddTorrent(download_dir, filename, metainfo, paused) => {
+            let tadd = TorrentAdd {
+                cookies: None,
+                bandwith_priority: None,
+                download_dir,
+                filename,
+                metainfo,
+                files_unwanted: None,
+                files_wanted: None,
+                labels: None,
+                paused: Some(paused),
+                peer_limit: None,
+                priority_high: None,
+                priority_low: None,
+                priority_normal: None,
+            };
+            let res = client.torrent_add(&tadd).await?;
+            let result = res
+                .as_object()
+                .expect("should return object")
+                .get("result")
+                .expect("must result")
+                .as_str()
+                .unwrap()
+                .to_string();
+            if result == "success" {
+                if notify_on_add {
+                    let _ = notify("Torrent Added!", "").await; // TODO: add name
+                }
+                //    let _ =  notify("Torrent Added!", "").await; // TODO: add name
+            } else if notify_on_add {
+                let _ = notify("Error!", "").await;
+            } else {
+                // TODO: add UI notification
+            }
+        }
+    };
+    Ok(())
 }

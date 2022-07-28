@@ -18,8 +18,9 @@ pub struct DirMapping {
 // hmm, now it's public mutable.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
+    pub connection_name: String,
     pub connection_string: String,
-    pub directories: Vec<String>,
+//    pub directories: Vec<String>,
     pub remote_base_dir: String,
     pub local_base_dir: String,
     pub refresh_interval: u16,
@@ -28,7 +29,7 @@ pub struct Config {
 }
 
 impl Config {
-    #![allow(dead_code)]
+  /*  #![allow(dead_code)]
     pub fn get_directories(&self) -> Vec<DirMapping> {
         self.directories
             .iter()
@@ -38,13 +39,14 @@ impl Config {
                 local_path: format!("{}/{}", self.local_base_dir, x),
             })
             .collect()
-    }
+    }*/
 }
 
 fn empty_config() -> Config {
     Config {
+        connection_name: String::from("localhost"),
         connection_string: String::from(""),
-        directories: vec![],
+ //       directories: vec![],
         remote_base_dir: "".to_string(),
         local_base_dir: "".to_string(),
         refresh_interval: 3,

@@ -31,8 +31,8 @@ use tui::{
 };
 use tui_tree_widget::{flatten, get_identifier_without_leaf, Tree, TreeItem, TreeState};
 use utils::{
-    build_file_tree, format_download_speed, format_eta, format_percent_done, format_size, format_status,
-    process_folder, DOWN_QUEUED, SEEDING, STOPPED, VERIFY_QUEUED, format_time,
+    build_file_tree, format_download_speed, format_eta, format_percent_done, format_size, format_status, format_time,
+    process_folder, utf8_split, DOWN_QUEUED, SEEDING, STOPPED, VERIFY_QUEUED,
 };
 
 #[derive(Error, Debug)]
@@ -63,9 +63,15 @@ pub enum Transition {
     ConfirmRemove(bool),
     Move,
     Files,
-    Help
+    Help,
+    Find(bool, usize)
 }
 
+impl Transition {
+    pub fn is_find(&self) -> bool {
+        matches!(self, Transition::Find(_, _))
+    }
+}
 
 pub fn calculate_folder_keys(app: &mut App, skip_folder: Option<String>) {
     let sk_folder = skip_folder.unwrap_or_else(|| "".to_string());
@@ -95,12 +101,12 @@ pub fn calculate_folder_keys(app: &mut App, skip_folder: Option<String>) {
 
 pub struct App<'a> {
     pub transition: Transition,
+    pub prev_transition: Transition,
     pub left_filter_state: ListState,
     pub main_table_state: TableState,
     pub memory_usage: u64,
     pub torrents: HashMap<i64, TorrentInfo>,
     pub filtered_torrents: Vec<TorrentInfo>,
-    //  pub filtered_torrents: Vec<i64>, strange, no use..?
     pub free_space: u64,
     pub stats: SessionStats,
     pub groups: TorrentGroupStats,
@@ -113,7 +119,8 @@ pub struct App<'a> {
     pub tree_state: TreeState,
     pub details: Option<TorrentDetails>,
     pub tree_items: Vec<TreeItem<'a>>,
-    pub config: Config
+    pub config: Config,
+    pub err: Option<(String, String)>
 }
 
 impl Default for App<'_> {
@@ -122,7 +129,7 @@ impl Default for App<'_> {
         let main_table_state = TableState::default();
         let memory_usage: u64 = 0;
         let torrents: HashMap<i64, TorrentInfo> = HashMap::new();
-        let filtered_torrents: Vec<TorrentInfo> = vec![]; // now I need to filter efficiently... aah
+        let filtered_torrents: Vec<TorrentInfo> = vec![];
         let free_space: u64 = 0;
         let stats: SessionStats = SessionStats::empty();
         let groups: TorrentGroupStats = TorrentGroupStats::empty();
@@ -130,6 +137,7 @@ impl Default for App<'_> {
 
         App {
             transition: Transition::MainScreen,
+            prev_transition: Transition::MainScreen,
             left_filter_state,
             main_table_state,
             memory_usage,
@@ -147,7 +155,8 @@ impl Default for App<'_> {
             tree_state: TreeState::default(),
             details: None,
             tree_items: vec![],
-            config
+            config,
+            err: None
         }
     }
 }
@@ -161,9 +170,9 @@ fn run_app<B: Backend>(
         terminal.draw(|f| ui(f, &mut app))?;
 
         match rx.blocking_recv() {
-            Some(TorrentUpdate::UiTick) => {
-                    //app.upload_data.insert(0, *app.upload_data.get(0).unwrap_or(&0));
-
+            Some(TorrentUpdate::UiTick) => {}
+            Some(TorrentUpdate::Err { msg, details }) => {
+                app.err = Some((msg, details));
             }
             Some(TorrentUpdate::Input(event)) => match event.code {
                 KeyCode::Char('q') => {
@@ -174,21 +183,19 @@ fn run_app<B: Backend>(
                         Transition::MainScreen => {
                             match event.code {
                                 KeyCode::Char(' ') => {
-                                    // TODO: if something is selected
-                                    app.transition = Transition::Action;
+                                    if app.selected.is_some() {
+                                        app.transition = Transition::Action;
+                                    }
                                 }
                                 KeyCode::F(1) => {
-                                    app.transition = Transition::Help; // TODO: prev transition
+                                    app.prev_transition = app.transition;
+                                    app.transition = Transition::Help;
                                 }
                                 KeyCode::Down | KeyCode::Char('j') => {
                                     if let Some(selected) = app.main_table_state.selected() {
                                         let amount_pets = app.filtered_torrents.len();
                                         if selected >= amount_pets - 1 {
-                                            app.main_table_state.select(Some(0));
-                                            app.selected = Some(app.filtered_torrents[0].clone());
-                                            sender
-                                                .blocking_send(TorrentCmd::GetDetails(app.filtered_torrents[0].id))
-                                                .expect("foo");
+                                            select_first_torrent(&mut app, sender.clone());
                                         } else {
                                             app.main_table_state.select(Some(selected + 1));
                                             app.selected = Some(app.filtered_torrents[selected + 1].clone());
@@ -199,11 +206,7 @@ fn run_app<B: Backend>(
                                                 .expect("foo");
                                         }
                                     } else {
-                                        app.main_table_state.select(Some(0));
-                                        app.selected = Some(app.filtered_torrents[0].clone());
-                                        sender
-                                            .blocking_send(TorrentCmd::GetDetails(app.filtered_torrents[0].id))
-                                            .expect("foo");
+                                        select_first_torrent(&mut app, sender.clone());
                                     }
                                 }
                                 KeyCode::Up | KeyCode::Char('k') => {
@@ -229,29 +232,31 @@ fn run_app<B: Backend>(
                                                     .expect("foo");
                                             }
                                         } else {
-                                            app.main_table_state.select(Some(0));
-                                            app.selected = Some(app.filtered_torrents[0].clone());
-                                            sender
-                                                .blocking_send(TorrentCmd::GetDetails(app.filtered_torrents[0].id))
-                                                .expect("foo");
+                                            select_first_torrent(&mut app, sender.clone());
                                         }
                                     } else {
                                         app.selected = None;
-                                        sender.blocking_send(TorrentCmd::Select(None)).expect("foo");
+                                        let _ = sender.blocking_send(TorrentCmd::Select(None));
                                     }
                                 }
                                 KeyCode::Char('f') => {
                                     calculate_folder_keys(&mut app, None);
                                     app.transition = Transition::Filter;
                                 }
-                                KeyCode::Char('s') | KeyCode::Char('/') => {
+                                KeyCode::Char('s') => {
                                     app.transition = Transition::Search;
                                 }
+                                KeyCode::Char('/') => {
+                                    app.input = "".to_string();
+                                    app.transition = Transition::Find(true, app.main_table_state.selected().unwrap_or(0));
+                                }
+                                KeyCode::Char('?') => {
+                                    app.input = "".to_string();
+                                    app.transition = Transition::Find(false, app.main_table_state.selected().unwrap_or(0));
+                                }
                                 KeyCode::Char('d') => {
-                                    //app.tree_state.close_all();
-                                    // TODO: open top-level
                                     app.transition = Transition::Files;
-                                    app.tree_state = TreeState::default(); // TODO: better don't open first level if it is already opened
+                                    app.tree_state = TreeState::default();
                                     open_first_level(&mut app);
                                 }
                                 KeyCode::Esc => {
@@ -277,7 +282,6 @@ fn run_app<B: Backend>(
                                 app.transition = Transition::MainScreen;
                             }
                             KeyCode::Char('t') => {
-                                // TODO: add in-place terminal?
                                 if let Some(x) = app
                                     .main_table_state
                                     .selected()
@@ -424,39 +428,21 @@ fn run_app<B: Backend>(
                                         .cloned()
                                         .collect();
                                     app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
-                                // TODO: this somehow adds some overhead
+                                    select_first_torrent(&mut app, sender.clone());
                                 } else {
-                                    /*
-
-                                                        },
-                                                        Filter::ByStatus(_) => {
-                                                            if let Filter::ByStatus(s) = app.current_filter.clone() {
-                                                            }
-                                                        }
-                                                        Filter::All => {
-                                                        }
-                                                        Filter::Active => {
-                                                            app.filtered_torrents = xs.iter().skip(1).map(|x| TorrentInfo::new(x)).collect();
-                                                        }
-                                                        Filter::Recent => {
-                                                        }
-                                                    }
-                                    */
                                     match c {
                                         'R' => {
                                             app.current_filter = Filter::Recent;
                                             app.transition = Transition::MainScreen;
                                             app.left_filter_state.select(Some(0));
                                             app.filtered_torrents = most_recent_items(&app.torrents);
-                                            //let mut xs : Vec<_> = app.torrents.values().cloned().collect();
-                                            //xs.sort_unstable_by_key(|x| -x.added_date);
-                                            //xs.truncate(150);
-                                            // app.filtered_torrents = xs;
+                                            select_first_torrent(&mut app, sender.clone());
                                         }
                                         'A' => {
                                             app.current_filter = Filter::Active;
                                             app.transition = Transition::MainScreen;
                                             app.left_filter_state.select(Some(1));
+                                            select_first_torrent(&mut app, sender.clone());
                                         }
                                         'P' => {
                                             app.current_filter = Filter::ByStatus(STOPPED);
@@ -469,7 +455,7 @@ fn run_app<B: Backend>(
                                                 .cloned()
                                                 .collect();
                                             app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
-                                            // TODO: this somehow adds some overhead
+                                            select_first_torrent(&mut app, sender.clone());
                                         }
                                         'L' => {
                                             app.current_filter = Filter::All;
@@ -477,7 +463,7 @@ fn run_app<B: Backend>(
                                             app.left_filter_state.select(Some(10));
                                             app.filtered_torrents = app.torrents.values().cloned().collect();
                                             app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
-                                            // TODO: this somehow adds some overhead
+                                            select_first_torrent(&mut app, sender.clone());
                                         }
                                         'G' => {
                                             app.current_filter = Filter::ByStatus(VERIFY_QUEUED);
@@ -490,7 +476,7 @@ fn run_app<B: Backend>(
                                                 .cloned()
                                                 .collect();
                                             app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
-                                            // TODO: this somehow adds some overhead
+                                            select_first_torrent(&mut app, sender.clone());
                                         }
                                         'C' => {
                                             app.current_filter = Filter::ByStatus(VERIFYING);
@@ -503,7 +489,7 @@ fn run_app<B: Backend>(
                                                 .cloned()
                                                 .collect();
                                             app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
-                                            // TODO: this somehow adds some overhead
+                                            select_first_torrent(&mut app, sender.clone());
                                         }
                                         'Q' => {
                                             app.current_filter = Filter::ByStatus(DOWN_QUEUED);
@@ -516,7 +502,7 @@ fn run_app<B: Backend>(
                                                 .cloned()
                                                 .collect();
                                             app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
-                                            // TODO: this somehow adds some overhead
+                                            select_first_torrent(&mut app, sender.clone());
                                         }
                                         'D' => {
                                             app.current_filter = Filter::ByStatus(DOWNLOADING);
@@ -529,7 +515,7 @@ fn run_app<B: Backend>(
                                                 .cloned()
                                                 .collect();
                                             app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
-                                            // TODO: this somehow adds some overhead
+                                            select_first_torrent(&mut app, sender.clone());
                                         }
                                         'U' => {
                                             app.current_filter = Filter::ByStatus(SEED_QUEUED);
@@ -542,7 +528,7 @@ fn run_app<B: Backend>(
                                                 .cloned()
                                                 .collect();
                                             app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
-                                            // TODO: this somehow adds some overhead
+                                            select_first_torrent(&mut app, sender.clone());
                                         }
                                         'S' => {
                                             app.current_filter = Filter::ByStatus(SEEDING);
@@ -555,7 +541,7 @@ fn run_app<B: Backend>(
                                                 .cloned()
                                                 .collect();
                                             app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
-                                            // TODO: this somehow adds some overhead
+                                            select_first_torrent(&mut app, sender.clone());
                                         }
                                         'E' => {
                                             app.current_filter = Filter::Error;
@@ -563,19 +549,68 @@ fn run_app<B: Backend>(
                                                 app.torrents.values().filter(|x| x.error > 0).cloned().collect();
                                             app.transition = Transition::MainScreen;
                                             app.left_filter_state.select(Some(9));
+                                            select_first_torrent(&mut app, sender.clone());
                                         }
                                         _ => {}
                                     }
                                 }
-                                // FIXME: update filter function..
                             }
                             _ => {}
                         },
                         Transition::Help => match event.code {
                             KeyCode::F(1) | KeyCode::Esc => {
-                                app.transition = Transition::MainScreen; // TODO: prev transition
+                                app.transition = app.prev_transition.clone();
                             }
                             _ => {}
+                        },
+                        Transition::Find(forward, current) => match event.code {
+                            KeyCode::Esc => {
+                                app.input = "".to_string();
+                                app.transition = Transition::MainScreen;
+                                app.main_table_state.select(Some(current));
+                            }
+                            KeyCode::Enter => {
+                                if let Some(i) = &app.main_table_state.selected() {
+                                    let x = &app.filtered_torrents[*i];
+                                    app.selected = Some(x.clone());
+                                            sender
+                                                .blocking_send(TorrentCmd::GetDetails(
+                                                    x.id
+                                                ))
+                                                .expect("foo");
+                                    app.transition = Transition::MainScreen;
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                app.input.pop(); // now we need go back..
+                                let maybe_x = if forward {
+                                    app.filtered_torrents.iter().enumerate().skip(current.saturating_sub(1)).find(|x| x.1.name.contains(&app.input))
+                                } else {
+                                    app.filtered_torrents.iter().enumerate().rev().skip(
+                                          app.filtered_torrents.len().saturating_sub(current.saturating_add(1))
+                                        ).find(|x| x.1.name.contains(&app.input)) 
+                                };
+                                if let Some((i, _)) = maybe_x {
+                                    app.main_table_state.select(Some(i));
+
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                app.input.push(c);
+                                let maybe_x = if forward {
+                                    app.filtered_torrents.iter().enumerate().skip(current.saturating_sub(1)).find(|x| x.1.name.contains(&app.input))
+                                } else {
+                                    app.filtered_torrents.iter().enumerate().rev().skip(
+                                          app.filtered_torrents.len().saturating_sub(current.saturating_add(1))
+                                        ).find(|x| x.1.name.contains(&app.input)) 
+                                };
+                                if let Some((i, _)) = maybe_x {
+                                    app.main_table_state.select(Some(i));
+
+                                }
+                            }
+                            _ => {}
+
                         }
                         Transition::Search => match event.code {
                             KeyCode::Esc => {
@@ -586,7 +621,6 @@ fn run_app<B: Backend>(
                                 };
                             }
                             KeyCode::Enter => {
-                                // commit search
                                 app.current_filter = Filter::Search(app.input.clone());
                                 app.transition = Transition::MainScreen;
                             }
@@ -609,7 +643,7 @@ fn run_app<B: Backend>(
                                     if let Some((f, _, _)) = app.folder_mapping.iter().find(|y| y.1 == c) {
                                         sender
                                             .blocking_send(TorrentCmd::Move(vec![x.id], f.to_string(), false))
-                                            .expect("should send"); // TODO: move haz parameter
+                                            .expect("should send");
                                         app.transition = Transition::MainScreen;
                                     }
                                     /*if let Some(f) = app.groups.folder_keys.get(&c) {
@@ -658,15 +692,8 @@ fn run_app<B: Backend>(
             },
 
             Some(TorrentUpdate::Partial(json, removed, _i, session_stats, free_space_opt, mem, details)) => {
-                //let prev_id = app.details.as_ref().map_or_else(|| u64::MAX, |x| x.id);
                 app.details = *details;
-                //let id = app.details.as_ref().map_or_else(|| u64::MAX, |x| x.id);
-                //if id != prev_id {
-                /*if let Some(d) = &app.details {
-                    app.tree_items = build_file_tree(d.files.clone());
-                }*/
-
-                //}
+                app.err = None;
 
                 if let Some(s) = *session_stats {
                     if app.upload_data.len() > 200 {
@@ -690,7 +717,6 @@ fn run_app<B: Backend>(
                     app.torrents.remove(&k);
                 }
                 let xs = json.as_array().unwrap().clone();
-                //xxs.sort_by(|a, b| a.as_array().unwrap()[0].as_i64().unwrap().cmp(&b.as_array().unwrap()[0].as_i64().unwrap()));
 
                 for x in xs.iter().skip(1) {
                     let ys = x.as_array().unwrap();
@@ -704,7 +730,6 @@ fn run_app<B: Backend>(
                 app.num_active = xs.len() - 1;
                 app.groups = update_torrent_stats(&app.torrents);
                 match app.current_filter.clone() {
-                    // FIXME: Error is not a status..
                     Filter::Search(text) => {
                         app.filtered_torrents = app
                             .torrents
@@ -732,22 +757,14 @@ fn run_app<B: Backend>(
                     }
                     Filter::Recent => {
                         app.filtered_torrents = most_recent_items(&app.torrents);
-                        // let mut xs : Vec<_> = app.torrents.values().cloned().collect();
-                        // xs.sort_unstable_by_key(|x| -x.added_date);
-                        // xs.truncate(150);
-                        // app.filtered_torrents = xs;
                     }
                     Filter::Error => {
                         app.filtered_torrents = app.torrents.values().filter(|x| x.error > 0).cloned().collect();
                     }
                 }
-                app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date); // TODO: this somehow adds some overhead
-                if !app.filtered_torrents.is_empty() && app.main_table_state.selected().is_none() {
-                    app.main_table_state.select(Some(0));
-                    app.selected = Some(app.filtered_torrents[0].clone());
-                    sender
-                        .blocking_send(TorrentCmd::Select(Some(app.filtered_torrents[0].id)))
-                        .expect("foo");
+                app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
+                if app.main_table_state.selected().is_none() {
+                    select_first_torrent(&mut app, sender.clone());
                 }
             }
             Some(TorrentUpdate::Full(xs)) => {
@@ -766,51 +783,56 @@ fn run_app<B: Backend>(
                 xs.sort_by_key(|x| -x.added_date);
                 xs.truncate(150);
                 app.filtered_torrents = xs;
-                //filtered_torrents = torrents.values().cloned().collect();
-
-                //torrents.sort_by(|a, b| a.property_value("id").get::<i64>().expect("fkjf").cmp(&b.property_value("id").get::<i64>().expect("xx")));
-                //model.remove_all();
-                //model.splice(0, 0, &torrents);
-                //update_torrent_stats(&model, &category_model );
             }
             Some(TorrentUpdate::Details(details)) => {
                 app.details = Some(*details);
-                //let id = app.details.as_ref().map_or_else(|| u64::MAX, |x| x.id);
-                //if id != prev_id {
                 if let Some(d) = &app.details {
-                    app.tree_items = build_file_tree(d.files.clone());
+                    app.tree_items = build_file_tree(&d.files);
                     app.tree_state = TreeState::default();
                 }
-
             }
-            None => {} // exit app, no more updates
+            None => {}
         }
     }
 }
+
+fn select_first_torrent(app: &mut App, sender: Sender<TorrentCmd>) {
+    if !app.filtered_torrents.is_empty() {
+        app.main_table_state.select(Some(0));
+        app.selected = Some(app.filtered_torrents[0].clone());
+        sender
+            .blocking_send(TorrentCmd::GetDetails(app.filtered_torrents[0].id))
+            .expect("foo");
+    } else {
+        app.selected = None;
+        let _ = sender.blocking_send(TorrentCmd::Select(None));
+    }
+}
+
 fn open_first_level(app: &mut App) {
     let visible = flatten(&app.tree_state.get_all_opened(), &app.tree_items);
     for x in visible {
         app.tree_state.open(x.identifier);
-    } 
-
+    }
 }
 
 fn move_up_down(app: &mut App, down: bool) {
     let visible = flatten(&app.tree_state.get_all_opened(), &app.tree_items);
-    let current_identifier = app.tree_state.selected();
-    let current_index = visible.iter().position(|o| o.identifier == current_identifier);
-    let new_index = current_index.map_or(0, |current_index| {
-        if down {
-            current_index.saturating_add(1)
-        } else {
-            current_index.saturating_sub(1)
-        }
-        .min(visible.len() - 1)
-    });
-    let new_identifier = visible.get(new_index).unwrap().identifier.clone();
-    app.tree_state.select(new_identifier);
+    if !visible.is_empty() {
+        let current_identifier = app.tree_state.selected();
+        let current_index = visible.iter().position(|o| o.identifier == current_identifier);
+        let new_index = current_index.map_or(0, |current_index| {
+            if down {
+                current_index.saturating_add(1)
+            } else {
+                current_index.saturating_sub(1)
+            }
+            .min(visible.len() - 1)
+        });
+        let new_identifier = visible.get(new_index).unwrap().identifier.clone();
+        app.tree_state.select(new_identifier);
+    }
 }
-
 
 fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
     let size = frame.size();
@@ -822,28 +844,15 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
             [
                 Constraint::Length(3),
                 Constraint::Min(2),
-                //                Constraint::Length(10),
                 Constraint::Length(3),
             ]
             .as_ref(),
         )
         .split(size);
-    /*let details = Paragraph::new(Spans::from(vec![
-        Span::styled("TODO!", Style::default()),
-    ]))
-    .style(Style::default().fg(Color::LightCyan))
-    .alignment(Alignment::Left)
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .style(Style::default().fg(Color::White))
-            .title("Details")
-            .border_type(BorderType::Plain),
-    );
 
-    frame.render_widget(details, chunks[2]);*/
     let status = Paragraph::new(Spans::from(vec![
-        Span::styled("🔨 NAS", Style::default()),
+        //Span::styled(format!("W: {}, H: {} ", frame.size().width, frame.size().height), Style::default()),
+        Span::styled(format!("🔨 {}", app.config.connection_name), Style::default()),
         Span::styled(" | Client Mem: ", Style::default()),
         Span::styled(format_size(app.memory_usage as i64), Style::default().fg(Color::Yellow)),
         Span::styled(" | Free Space: ", Style::default()),
@@ -869,6 +878,9 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
             .border_type(BorderType::Plain),
     );
 
+
+    if app.transition == Transition::Search || app.transition.is_find() {
+
     let search = Paragraph::new(Spans::from(vec![Span::styled(
         format!("Search: {}▋", app.input),
         Style::default().fg(Color::Yellow),
@@ -881,42 +893,15 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
             .title("Search")
             .border_type(BorderType::Plain),
     );
-
-    if app.transition == Transition::Search {
         frame.render_widget(search, chunks[2]);
     } else {
         frame.render_widget(status, chunks[2]);
     }
-    /*let menu_titles = vec!["Pets", "Add", "Delete", "Quit"];
 
-    let menu = menu_titles
-        .iter()
-        .map(|t| {
-            let (first, rest) = t.split_at(1);
-            Spans::from(vec![
-                Span::styled(
-                    first,
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::UNDERLINED),
-                ),
-                Span::styled(rest, Style::default().fg(Color::White)),
-            ])
-        })
-        .collect();
-
-    let tabs = Tabs::new(menu)
-        .select(app.active_menu_item.into())
-        .block(Block::default().title("Menu").borders(Borders::ALL))
-        .style(Style::default().fg(Color::White))
-        .highlight_style(Style::default().fg(Color::Yellow))
-        .divider(Span::raw("|"));
-
-    frame.render_widget(tabs, chunks[0]);*/
     let sparkline = Sparkline::default()
         .block(
             Block::default()
-                //.title("Upload rate")
-                .borders(Borders::BOTTOM), //.border_style()
-                                           //.border_type(BorderType::Thick),
+                .borders(Borders::BOTTOM), 
         )
         .data(&app.upload_data)
         .style(Style::default());
@@ -931,18 +916,15 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
             let pets_chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
-               // .constraints([Constraint::Percentage(60), Constraint::Percentage(40)].as_ref())
                 .split(chunks[1]);
             if let Some(details) = &app.details {
                 let details_frame = render_details(details);
 
                 let area = centered_rect(90, 60, pets_chunks[0]);
-                //frame.render_widget(details_frame, pets_chunks[0]);
                 frame.render_widget(details_frame, area);
 
                 let block = draw_tree(app.tree_items.clone());
                 frame.render_stateful_widget(block, pets_chunks[1], &mut app.tree_state);
-                //this clears out the background
             }
         }
         _ => {
@@ -960,23 +942,39 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                     .as_ref(),
                 )
                 .split(chunks[1]);
-            let filters = render_filters(&app.groups, &app.transition, &app.folder_mapping, app.num_active, &app.config);
+            let filters = render_filters(
+                &app.groups,
+                &app.transition,
+                &app.folder_mapping,
+                app.num_active,
+                &app.config,
+            );
             let main_table = render_main_table(&app.left_filter_state, &app.groups, &app.filtered_torrents);
-            frame.render_stateful_widget(filters, pets_chunks[0], &mut app.left_filter_state);
-            frame.render_stateful_widget(main_table, pets_chunks[1], &mut app.main_table_state);
+
+            if size.width > 120 {
+                frame.render_stateful_widget(filters, pets_chunks[0], &mut app.left_filter_state);
+                frame.render_stateful_widget(main_table, pets_chunks[1], &mut app.main_table_state);
+            } else {
+                frame.render_stateful_widget(main_table, chunks[1], &mut app.main_table_state);
+                if app.transition == Transition::Filter {
+                    frame.render_widget(Clear, pets_chunks[0]);
+                    frame.render_stateful_widget(filters, pets_chunks[0], &mut app.left_filter_state);
+                }
+            }
         }
     }
     match app.transition {
         Transition::Action => {
             let block = Block::default().title("Actions").borders(Borders::ALL);
-            let area = centered_rect(16, 38, size);
+            let area_width = if size.width > 120 { 16 } else { 38 };
+            let area = centered_rect(area_width, 38, size);
             let vert_layout = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(2), Constraint::Length(15)].as_ref())
                 .split(block.inner(area));
             let list = action_menu();
-            frame.render_widget(Clear, area); //this clears out the background
-            frame.render_widget(block, area); //this clears out the background
+            frame.render_widget(Clear, area);
+            frame.render_widget(block, area);
 
             let title = app.selected.as_ref().map_or_else(
                 || "".to_string(),
@@ -1003,8 +1001,8 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
             {
                 let area = centered_rect(46, 15, size);
                 let block = delete_confirmation_dialog(with_data, &x.name);
-                frame.render_widget(Clear, area); //this clears out the background
-                frame.render_widget(block, area); //this clears out the background
+                frame.render_widget(Clear, area);
+                frame.render_widget(block, area);
             }
         }
         Transition::Move => {
@@ -1018,24 +1016,28 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
         }
         _ => {}
     }
-    // restore terminal
+    if let Some((msg, details)) = &app.err {
+                let area = centered_rect(36, 40, size);
+                let block = error_dialog(msg, details);
+                frame.render_widget(Clear, area);
+                frame.render_widget(block, area);
+
+    }
 }
 
 fn render_help<'a>() -> Paragraph<'a> {
     let home = Paragraph::new(vec![
         Spans::from(vec![Span::raw("")]),
-        Spans::from(vec![Span::raw("Welcome")]),
-        Spans::from(vec![Span::raw("")]),
-        Spans::from(vec![Span::raw("to")]),
-        Spans::from(vec![Span::raw("")]),
-        Spans::from(vec![Span::styled("Transgression TUI", Style::default().fg(Color::LightBlue))]),
-        Spans::from(vec![Span::raw("!!!")]),
-        Spans::from(vec![Span::raw(
-            "Navigation: 'hjkl' or '← ↑ → ↓'. Apply filters: 'f'. Action: 'space'. This screen: 'F1'. Details: 'd'. Exit 'q'",
+        Spans::from(vec![Span::styled(
+            "Transgression TUI",
+            Style::default().fg(Color::LightBlue),
         )]),
+        Spans::from(vec![Span::raw("Navigation: 'hjkl' or '← ↑ → ↓'. Apply filters: 'f'. ")]),
+        Spans::from(vec![Span::raw("Global search s. Search list forward /, backward ?.")]),
         Spans::from(vec![Span::raw(
-            "Configuration file: ~/.config/transg/config.json",
+            "Action: 'space'. This screen: 'F1'. Details: 'd'. Exit 'q'",
         )]),
+        Spans::from(vec![Span::raw("Configuration file: ~/.config/transg/config.json")]),
     ])
     .alignment(Alignment::Center)
     .block(
@@ -1049,75 +1051,52 @@ fn render_help<'a>() -> Paragraph<'a> {
     home
 }
 fn render_details(details: &TorrentDetails) -> Table {
-   /* 
-    home*/
-     let key_style = Style::default().fg(Color::LightBlue);
-     let value_style = Style::default().fg(Color::Gray);
-        let rows = vec![
-            Row::new(vec![
-                Cell::from(Span::styled("Name:", key_style)),
-                Cell::from(Span::styled(details.name.clone(), value_style)),
-            ]),
-            Row::new(vec![
-                Cell::from(Span::styled("Size:", key_style)),
-                Cell::from(Span::styled(format_size(details.size_when_done as i64), value_style)),
-            ]),
-            Row::new(vec![
-                Cell::from(Span::styled("Priority", key_style)),
-                Cell::from(Span::styled(format!("{}", details.priority), value_style)),
-            ]),
-            Row::new(vec![
-                Cell::from(Span::styled("Completed At:", key_style)),
-                Cell::from(Span::styled(format_time(details.done_date), value_style)),
-            ]),
-            Row::new(vec![
-                Cell::from(Span::styled("Upload Ratio:", key_style)),
-                Cell::from(Span::styled(format!("{:.2}", details.upload_ratio), value_style)),
-            ]),
-            Row::new(vec![
-                Cell::from(Span::styled("Location:", key_style)),
-                Cell::from(Span::styled(details.download_dir.clone(), value_style)),
-            ]),
-            Row::new(vec![
-                Cell::from(Span::styled("Hash:", key_style)),
-                Cell::from(Span::styled(details.hash_string.clone(), value_style)),
-            ]),
-            Row::new(vec![
-                Cell::from(Span::styled("Comment:", key_style)),
-                Cell::from(Span::styled(details.comment.clone(), value_style)),
-            ]),
-            Row::new(vec![
-                Cell::from(Span::styled("Error:", key_style)),
-                Cell::from(Span::styled(details.error_string.clone(), value_style)),
-            ]),
-        ];
-        Table::new(rows)
-        /*.block(
-            Block::default()
-                .borders(Borders::NONE)
-                .border_type(BorderType::Plain)
-                .title("Details"),
-                
-        )*/
+    let key_style = Style::default().fg(Color::LightBlue);
+    let value_style = Style::default().fg(Color::Gray);
+    let rows = vec![
+        Row::new(vec![
+            Cell::from(Span::styled("Name:", key_style)),
+            Cell::from(Span::styled(details.name.clone(), value_style)),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Size:", key_style)),
+            Cell::from(Span::styled(format_size(details.size_when_done as i64), value_style)),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Priority", key_style)),
+            Cell::from(Span::styled(format!("{}", details.priority), value_style)),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Completed At:", key_style)),
+            Cell::from(Span::styled(format_time(details.done_date), value_style)),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Upload Ratio:", key_style)),
+            Cell::from(Span::styled(format!("{:.2}", details.upload_ratio), value_style)),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Location:", key_style)),
+            Cell::from(Span::styled(details.download_dir.clone(), value_style)),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Hash:", key_style)),
+            Cell::from(Span::styled(details.hash_string.clone(), value_style)),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Comment:", key_style)),
+            Cell::from(Span::styled(details.comment.clone(), value_style)),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Error:", key_style)),
+            Cell::from(Span::styled(details.error_string.clone(), value_style)),
+        ]),
+    ];
+    Table::new(rows)
         .widths(&[Constraint::Length(17), Constraint::Length(60)])
         .column_spacing(1)
 }
 
 fn draw_tree(items: Vec<TreeItem>) -> Tree {
-    //let items = build_file_tree(details.files);
-    /*let items = vec![
-        TreeItem::new_leaf("a"),
-        TreeItem::new(
-            "b",
-            vec![
-                TreeItem::new_leaf("c"),
-                TreeItem::new("d", vec![TreeItem::new_leaf("e"), TreeItem::new_leaf("f")]),
-                TreeItem::new_leaf("g"),
-            ],
-        ),
-        TreeItem::new_leaf("h"),
-    ];*/
-
     Tree::new(items)
         .block(Block::default().borders(Borders::ALL).title("Files"))
         .highlight_style(
@@ -1141,7 +1120,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-
     run_app(&mut terminal, app, rx, processor.get_sender())?;
 
     disable_raw_mode()?;
@@ -1150,36 +1128,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     terminal.show_cursor()?;
     Ok(())
 }
-#[allow(dead_code)]
-fn utf8_truncate(input: &mut String, maxsize: usize) {
-    let mut utf8_maxsize = input.len();
-    if utf8_maxsize >= maxsize {
-        {
-            let mut char_iter = input.char_indices();
-            while utf8_maxsize >= maxsize {
-                utf8_maxsize = match char_iter.next_back() {
-                    Some((index, _)) => index,
-                    _ => 0,
-                };
-            }
-        } // Extra {} wrap to limit the immutable borrow of char_indices()
-        input.truncate(utf8_maxsize);
-    }
-}
-
-fn utf8_split(input: &str, at: usize) -> (String, String) {
-    let mut it = input.chars();
-    let fst = it.by_ref().take(at).collect();
-    let snd = it.collect();
-    (fst, snd)
-}
 
 fn render_filters<'a>(
     groups: &TorrentGroupStats,
     transition: &Transition,
     mapping: &[(String, char, usize)],
     num_active: usize,
-    config: &Config
+    config: &Config,
 ) -> List<'a> {
     let filters = Block::default()
         .borders(Borders::ALL)
@@ -1187,8 +1142,8 @@ fn render_filters<'a>(
         .title("Filters")
         .border_type(BorderType::Plain);
     let filter_items = vec![
-        ("Recent".to_string(), 'R', 0),              // TODO: add actually active items
-        (format!("Active: {}", num_active), 'A', 0), // TODO: add actually active items
+        ("Recent".to_string(), 'R', 0),
+        (format!("Active: {}", num_active), 'A', 0),
         (format!("Paused: {}", groups.num_stopped), 'P', 0),
         (format!("Checking queue: {}", groups.num_queue_checking), 'G', 7),
         (format!("Checking: {}", groups.num_checking), 'C', 0),
@@ -1227,7 +1182,6 @@ fn render_filters<'a>(
             }
         })
         .collect();
-    //folder_items.sort();
 
     let mut items: Vec<_> = filter_items
         .iter()
@@ -1270,16 +1224,8 @@ fn render_main_table<'a>(
     _groups: &TorrentGroupStats,
     torrents: &[TorrentInfo],
 ) -> Table<'a> {
-    /*let pet_detail = Table::new(vec![Row::new(vec![
-        Cell::from(Span::raw(selected_pet.id.to_string())),
-        Cell::from(Span::raw(selected_pet.name)),
-        Cell::from(Span::raw(selected_pet.category)),
-        Cell::from(Span::raw(selected_pet.age.to_string())),
-        Cell::from(Span::raw(selected_pet.created_at.to_string())),
-    ])])*/
     let rows: Vec<_> = torrents
         .iter()
-        //.take(40)
         .map(|x| {
             Row::new(vec![
                 Cell::from(Span::raw(format_status(x.status, x.error))),
@@ -1332,7 +1278,6 @@ fn render_main_table<'a>(
     pet_detail
 }
 
-/// helper function to create a centered rect using up certain percentage of the available rect `r`
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
@@ -1393,16 +1338,33 @@ fn action_menu<'a>() -> List<'a> {
         .collect();
     List::new(items)
 }
+fn error_dialog<'a>(msg: &'a str, details: &'a str) -> Paragraph<'a> {
+    let mut lines = vec![
+        Spans::from(vec![Span::raw("")]),
+        Spans::from(vec![Span::styled("Bloody hell!", Style::default().fg(Color::Red))]),
+        Spans::from(vec![Span::raw("")]),
+        Spans::from(vec![Span::styled(msg, Style::default().fg(Color::Red))]),
+    ];
+    for l in details.split('\n') {
+        lines.push(Spans::from(vec![Span::styled(l, Style::default().fg(Color::Gray))]));
+    }
+    let message = Paragraph::new(lines)
+    .wrap(Wrap { trim: false })
+    .block(Block::default().title("Aarrgh!").borders(Borders::ALL).border_style(Style::default().fg(Color::Red)));
+    message
+}
 fn delete_confirmation_dialog(with_data: bool, name: &str) -> Paragraph {
     let block = Block::default().title("Confirm").borders(Borders::ALL);
     let message = Paragraph::new(Spans::from(vec![
         Span::styled("Sure to remove '", Style::default()),
         Span::styled(name, Style::default().fg(Color::Gray)),
+        Span::styled("'", Style::default()),
         if with_data {
-            Span::styled("' with all its data?[y/n]", Style::default().fg(Color::Red))
+            Span::styled(" with all its data?", Style::default().fg(Color::Red))
         } else {
-            Span::styled("'?[y/n]", Style::default())
+            Span::raw("?")
         },
+        Span::styled("[y/n]", Style::default()),
     ]))
     .wrap(Wrap { trim: false })
     .block(block);
@@ -1414,23 +1376,10 @@ fn move_dialog<B: Backend>(frame: &mut Frame<B>, name: &str, folders: &[(String,
     let title = Paragraph::new(Spans::from(vec![Span::styled(name, Style::default().fg(Color::Gray))]))
         .wrap(Wrap { trim: false });
 
-    /*let mut folder_items: Vec<_> = folders
-        .iter()
-        .filter(|x| x.0 != dir)
-        .map(|x|  process_folder(x.0))
-        .collect();
-    folder_items.sort();*/
-
-    // let mut occupied: HashSet<char> = HashSet::new();
-
-    // probably should move to state, then use HashMap to get  correct folder..
     let items: Vec<_> = folders
         .iter()
         .map(|x| {
             let name = process_folder(&x.0, &config.remote_base_dir);
-            // better find unique character position,
-            //let (i,c) = name.chars().enumerate().filter(|x| !occupied.contains(&x.1)).next().expect("unique");
-            //occupied.insert(c);
             let (first, second) = utf8_split(&name, x.2);
             let second: String = second.chars().skip(1).collect();
 
@@ -1455,17 +1404,9 @@ fn move_dialog<B: Backend>(frame: &mut Frame<B>, name: &str, folders: &[(String,
         .constraints([Constraint::Length(2), Constraint::Length(15)].as_ref())
         .split(block.inner(area));
 
-    /*let title = app.selected.as_ref().map_or_else(|| "".to_string(), |x| {
-        if x.name.len() > 25 {
-           x.name.chars().take(25).collect::<String>() + "…"
-        } else {
-            x.name.clone()
-        }
-    });*/
-
     let area = centered_rect(46, 38, size);
-    frame.render_widget(Clear, area); //this clears out the background
-    frame.render_widget(block, area); //this clears out the background
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
     frame.render_widget(title, vert_layout[0]);
     frame.render_widget(folder_list, vert_layout[1]);
 }
@@ -1481,21 +1422,3 @@ fn most_recent_items(torrents: &HashMap<i64, TorrentInfo>) -> Vec<TorrentInfo> {
     }
     heap.into_sorted_vec()
 }
-/*fn n_largest<T: PartialOrd>(array: &mut Vec<T>, n: usize) -> Vec<T> {
-    let mut res = vec![];
-
-    for i in 0..n {
-        let mut max1 = array[0];
-
-        for j in 1..array.len() {
-            if  array[j] >= max1 {
-               max1 = array[j];
-            }
-        }
-
-
-        array.remove(j);
-        res.push(max1)
-    }
-    res
-}*/

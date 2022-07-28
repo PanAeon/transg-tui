@@ -48,7 +48,7 @@ pub fn update_torrent_stats(torrents: &HashMap<i64, TorrentInfo>) -> TorrentGrou
             group_stats.num_error += 1;
         }
         let folder = x.download_dir.clone();
-        *group_stats.folders.entry(folder).or_insert(1) += 1;
+        *group_stats.folders.entry(folder).or_insert(0) += 1;
         group_stats.num_total += 1;
         match status {
             STOPPED => group_stats.num_stopped += 1,

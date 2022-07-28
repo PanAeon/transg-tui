@@ -35,6 +35,9 @@ pub const SEED_QUEUED: i64 = 5;
 pub const SEEDING: i64 = 6;
 
 pub fn process_folder(s: &str, base_dir: &str) -> String {
+    if s == base_dir {
+        s.split('/').last().unwrap_or("<root>").to_string()
+    } else {
     let mut s = s.replace(base_dir, "");
     if s.starts_with('/') {
         s = s.strip_prefix('/').expect("prefix").to_string();
@@ -44,6 +47,7 @@ pub fn process_folder(s: &str, base_dir: &str) -> String {
         format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1])
     } else {
         s.to_string()
+    }
     }
 }
 
@@ -125,6 +129,32 @@ pub fn format_status<'a>(x: i64, err: i64) -> &'a str {
     }
     }
 }
+
+
+#[allow(dead_code)]
+pub fn utf8_truncate(input: &mut String, maxsize: usize) {
+    let mut utf8_maxsize = input.len();
+    if utf8_maxsize >= maxsize {
+        {
+            let mut char_iter = input.char_indices();
+            while utf8_maxsize >= maxsize {
+                utf8_maxsize = match char_iter.next_back() {
+                    Some((index, _)) => index,
+                    _ => 0,
+                };
+            }
+        } // Extra {} wrap to limit the immutable borrow of char_indices()
+        input.truncate(utf8_maxsize);
+    }
+}
+
+pub fn utf8_split(input: &str, at: usize) -> (String, String) {
+    let mut it = input.chars();
+    let fst = it.by_ref().take(at).collect();
+    let snd = it.collect();
+    (fst, snd)
+}
+
 // TODO: write something better..
 pub fn do_build_tree(parent_path: &str, level: usize, xs: Vec<(u64, u64, Vec<String>)>) -> Vec<Node> {
     let mut ns: Vec<Node> = vec![];
@@ -180,37 +210,32 @@ pub fn build_tree(files: &[transmission::File]) -> Vec<Node> {
     xs.sort_by(|a, b| a.2[0].partial_cmp(&b.2[0]).unwrap());
     do_build_tree("", 0, xs)
 }
-pub fn do_build_file_tree<'a>(parent_path: String, level: usize, xs: Vec<(u64, u64, Vec<String>)>) -> Vec<TreeItem<'a>> {
+pub fn do_build_file_tree<'a>(level: usize, xs: Vec<(u64, u64, Vec<u64>)>, strings: &HashMap<u64, &str>) -> Vec<TreeItem<'a>> {
     let mut ns: Vec<TreeItem> = vec![];
 
-    let mut parents: Vec<String> = xs
+    let mut parents: Vec<u64> = xs
         .iter()
         .filter(|x| x.2.len() > level)
-        .map(|x| x.2[level].clone())
+        .map(|x| x.2[level])
         .collect();
     parents.sort();
     parents.dedup();
 
     for name in parents {
-        let children: Vec<(u64, u64, Vec<String>)> = xs
+        let children: Vec<(u64, u64, Vec<u64>)> = xs
             .iter()
             .filter(|x| x.2.len() > level && x.2[level] == name)
             .cloned()
             .collect();
-        let path = if parent_path.is_empty() {
-            name.to_string()
-        } else {
-            format!("{}/{}", parent_path, name)
-        };
         let size: u64 = children.iter().map(|x| x.0).sum();
         //let downloaded = children.iter().map(|x| x.1).sum();
         let cs = if children.len() > 1 {
-            do_build_file_tree(path, level + 1, children)
+            do_build_file_tree(level + 1, children, strings)
         } else {
             vec![]
         };
         ns.push(TreeItem::new(
-            format!("{} - {}", name, crate::utils::format_size(size as i64))
+            format!("{} - {}", strings.get(&name).expect("should be name"), crate::utils::format_size(size as i64))
          //   path,
           //  size,
           //  downloaded,
@@ -218,18 +243,29 @@ pub fn do_build_file_tree<'a>(parent_path: String, level: usize, xs: Vec<(u64, u
     }
     ns
 }
-pub fn build_file_tree<'a>(files: Vec<transmission::File>) -> Vec<TreeItem<'a>> {
-    let mut strings: HashMap<u64, &str> = HashMap::new();
-    let mut xs: Vec<(u64, u64, Vec<String>)> = files
+pub fn build_file_tree<'a>(files: &[transmission::File]) -> Vec<TreeItem<'a>> {
+    let mut id: u64 = 0;
+    let mut strings: HashMap<&str, u64> = HashMap::new();
+    let mut xs: Vec<(u64, u64, Vec<u64>)> = files
         .iter()
         .map(|f| {
             (
                 f.length,
                 f.bytes_completed,
-                f.name.split('/').map(String::from).collect(),
+                f.name.split('/').map(|s| {
+                    if let Some(id) = strings.get(s) {
+                        *id
+                    } else {
+                        id += 1;
+                        strings.insert(s, id);
+                        id
+                    }
+
+                }).collect(),
             )
         })
         .collect();
     xs.sort_by(|a, b| a.2[0].partial_cmp(&b.2[0]).unwrap());
-    do_build_file_tree("".to_string(), 0, xs)
+    let strings : HashMap<u64, &str> = strings.iter().map(|x| (*x.1, *x.0)).collect();
+    do_build_file_tree(0, xs, &strings)
 }

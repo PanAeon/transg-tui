@@ -32,18 +32,20 @@
               "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.libxml2.dev}/lib/pkgconfig";
             shellHook = "exec fish";
           };
-      packages.transgression-tui = pkgs.callPackage (with pkgs;
-          rustPlatform.buildRustPackage rec {
+      packages.transgression-tui = #pkgs.callPackage (with pkgs;
+          with pkgs; rustPlatform.buildRustPackage rec {
             pname = "transg-tui";
             version = "0.0.1";
 
-            src = fetchFromGitHub {
+            src = ./.;
+
+            /*src = fetchFromGitHub {
               owner = "panaeon";
               repo = pname;
               rev = "4adc304f8d398934b80b42648e2b6b9414581a0c";
               sha256 = "sha256-ijwI5ujuGneThN6mcJSSb6CqMiKRkvsqvUv0/GyNBjs=";
               fetchSubmodules = true;
-            };
+            };*/
 
             cargoSha256 = "sha256-4xsQ/et56xD54GPzOv1bWr6MxeHkCU90cp6b+L9KeBQ=";
 
@@ -59,7 +61,7 @@
               license = licenses.mit;
               maintainers = [ ];
             };
-          }) { };
+          };#) { };
         defaultPackage = packages.transgression-tui;
       });
 

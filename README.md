@@ -80,7 +80,7 @@ Substitutions:
 * VIM-like keys
 * Organize your torrents with folders
 
-## Similar projects:
+## Similar apps:
 * `transmission-remote`
 * `Fragments`
 * `transmission-qt` 

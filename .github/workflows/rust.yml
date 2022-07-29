@@ -26,5 +26,10 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Build
       run: cargo build --release --verbose
+    - name: 'Upload Artifact'
+      uses: actions/upload-artifact@v3
+      with:
+        name: transg-tui
+        path: target/release/transgression-tui 
     - name: Run tests
       run: cargo test --verbose

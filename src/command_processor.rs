@@ -1,10 +1,9 @@
 use crate::config::Config;
-use crate::notification_utils::notify;
 use crate::transmission::{FreeSpace, Result, SessionStats, TorrentAdd, TorrentDetails, TransmissionClient};
 use crate::utils::build_tree;
 use crossterm::event::{self, KeyEvent};
 use lazy_static::lazy_static;
-use procfs::process::Process;
+//use procfs::process::Process;
 use std::fs;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
@@ -20,7 +19,6 @@ pub enum TorrentUpdate {
         u64,
         Box<Option<SessionStats>>,
         Option<FreeSpace>,
-        u64,
         Box<Option<TorrentDetails>>,
     ),
     Details(Box<TorrentDetails>),
@@ -36,8 +34,7 @@ pub enum TorrentUpdate {
 #[allow(dead_code)]
 pub enum TorrentCmd {
     Tick(u64),
-    OpenDlDir(i64),
-    OpenDlTerm(i64),
+    Action(i64, usize),
     GetDetails(i64),
     Select(Option<i64>),
     QueueMoveUp(Vec<i64>),
@@ -104,7 +101,7 @@ impl CommandProcessor {
         self.sender.clone()
     }
 
-    pub fn run(&mut self, config: Config, ping: bool, notify_on_add: bool) {
+    pub fn run(&mut self, config: Config, ping: bool) {
         let sender = self.sender.clone();
 
         let update_sender = self.update_sender.clone();
@@ -146,12 +143,12 @@ impl CommandProcessor {
             });
         });
 
-        let transmission_url = config.connection_string.to_string();
+        //let transmission_url = config.connection_string.to_string();
         //let remote_base_dir = config.remote_base_dir.to_string();
         std::thread::spawn(move || {
             let rt = Runtime::new().expect("can't create runtime");
             rt.block_on(async move {
-                let client = TransmissionClient::new(&transmission_url);
+                let client = TransmissionClient::new(&config.connection_string, &config.username, &config.password);
                 if ping {
                     let res = client.get_all_torrents(&TORRENT_INFO_FIELDS).await;
                     if let Err(error) = res {
@@ -176,8 +173,7 @@ impl CommandProcessor {
                         &update_sender,
                         &mut details_id,
                         &client,
-                        &config,
-                        notify_on_add,
+                        &config
                     )
                     .await;
                     if let Err(error) = result {
@@ -200,8 +196,7 @@ async fn update_step(
     update_sender: &mpsc::Sender<TorrentUpdate>,
     details_id: &mut Option<i64>,
     client: &TransmissionClient,
-    config: &Config,
-    notify_on_add: bool,
+    config: &Config
 ) -> Result<()> {
     let cmd = receiver.recv().await.expect("probably ticker thread panicked");
 
@@ -238,11 +233,11 @@ async fn update_step(
                 None
             };
 
-            let me = Process::myself().unwrap();
-            let me_mem = me.statm().unwrap();
-            let page_size = procfs::page_size().unwrap() as u64;
+            //let me = Process::myself().unwrap();
+            //let me_mem = me.statm().unwrap();
+            //let page_size = procfs::page_size().unwrap() as u64;
 
-            let mem = page_size * (me_mem.resident - me_mem.shared);
+            //let mem = page_size * (me_mem.resident - me_mem.shared);
             let mut maybe_details: Option<TorrentDetails> = None;
             if let Some(id) = details_id {
                 let details = client.get_torrent_details(vec![*id]).await?; // TODO: what if id is wrong?
@@ -257,16 +252,16 @@ async fn update_step(
                     i,
                     Box::new(session_stats),
                     free_space,
-                    mem,
                     Box::new(maybe_details),
                 ))
                 .await
                 .expect("blah");
         }
-        TorrentCmd::OpenDlDir(id) => {
+        TorrentCmd::Action(id, idx) => {
             let details = client.get_torrent_details(vec![id]).await?; // TODO: what if id is wrong?
             if !details.arguments.torrents.is_empty() {
-                let location = details.arguments.torrents[0].download_dir.clone();
+                let torrent = &details.arguments.torrents[0];
+                let location = torrent.download_dir.clone();
                 let my_loc = location.replace(&config.remote_base_dir, &config.local_base_dir);
                 let me_loc2 = my_loc.clone();
                 let tree = build_tree(&details.arguments.torrents[0].files);
@@ -277,34 +272,17 @@ async fn update_step(
                 } else {
                     me_loc2
                 };
-                let mut cmd_builder = std::process::Command::new(config.file_manager.cmd.clone());
-                for a in &config.file_manager.args {
-                    let arg = a.replace("{location}", &l);
+                let action = config.actions.get(idx).expect("Wrong action index!");
+                let mut cmd_builder = std::process::Command::new(action.cmd.clone());
+                for a in &action.args {
+                    let arg = a.replace("{location}", &l)
+                               .replace("{id}", &torrent.id.to_string())
+                               .replace("{hash}", &torrent.hash_string)
+                               .replace("{download_dir}", &torrent.download_dir)
+                               .replace("{name}", &torrent.name);
                     cmd_builder.arg(&arg);
                 }
                 cmd_builder.spawn().expect("failed to spawn"); // FIXME: this expect is really unnecessary
-            }
-        }
-        TorrentCmd::OpenDlTerm(id) => {
-            // TODO: refactor both into single function
-            let details = client.get_torrent_details(vec![id]).await?; // TODO: what if id is wrong?
-            if !details.arguments.torrents.is_empty() {
-                let location = details.arguments.torrents[0].download_dir.clone();
-                let my_loc = location.replace(&config.remote_base_dir, &config.local_base_dir);
-                let me_loc2 = my_loc.clone();
-                let tree = build_tree(&details.arguments.torrents[0].files);
-                let p = my_loc + "/" + &tree[0].path;
-                let l = if tree.len() == 1 && fs::read_dir(&p).is_ok() {
-                    p
-                } else {
-                    me_loc2
-                };
-                let mut cmd_builder = std::process::Command::new(config.terminal.cmd.clone());
-                for a in &config.terminal.args {
-                    let arg = a.replace("{location}", &l);
-                    cmd_builder.arg(&arg);
-                }
-                cmd_builder.spawn().expect("failed to spawn");
             }
         }
         TorrentCmd::QueueMoveUp(ids) => {
@@ -357,7 +335,7 @@ async fn update_step(
                 priority_normal: None,
             };
             let res = client.torrent_add(&tadd).await?;
-            let result = res
+            let _ = res
                 .as_object()
                 .expect("should return object")
                 .get("result")
@@ -365,16 +343,6 @@ async fn update_step(
                 .as_str()
                 .unwrap()
                 .to_string();
-            if result == "success" {
-                if notify_on_add {
-                    let _ = notify("Torrent Added!", "").await; // TODO: add name
-                }
-                //    let _ =  notify("Torrent Added!", "").await; // TODO: add name
-            } else if notify_on_add {
-                let _ = notify("Error!", "").await;
-            } else {
-                // TODO: add UI notification
-            }
         }
     };
     Ok(())

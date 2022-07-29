@@ -15,6 +15,7 @@ Dependencies:
 ```bash
 cargo build --release
 ```
+Note: I've tested it only on __Linux__  so far.
 
 ### NIX
 ```bash
@@ -25,6 +26,7 @@ or
 nix run github:PanAeon/transg-tui
 ```
 
+
 ## Configuration
 
 Configuration file uses JSON and is located at `~/.config/transg/config.json`
@@ -34,19 +36,33 @@ Example config:
 {
   "connection_name": "localhost",
   "connection_string": "http://127.0.0.1:9091/transmission/rpc",
+  "username": "",
+  "password": "",
   "remote_base_dir": "/var/lib/transmission/torrents",
   "local_base_dir": "/var/mount/torrents",
   "refresh_interval": 1200,
-  "file_manager": {
+  "actions": [{
+    "description": "open in nautilus",
+    "shortcut": "o",
     "cmd": "swaymsg",
     "args": ["exec", "--", "nautilus", "\"{location}\""]
   },
-  "terminal": {
+  {
+    "description": "terminal",
+    "shortcut": "t",
     "cmd": "swaymsg",
     "args": ["exec", "--", "alacritty", "--working-directory", "\"{location}\""]
-  }
+  }],
 }
 ```
+Substitutions:
+
+|  Token            | Description                                                        |
+| ----------------- | ------------------------------------------------------------------ |
+|  `{location}`     | If torrent contains folder then this folder else its download dir  |
+|  `{id}`           | Torrent's id                                                       |
+|  `{download_dir}` | Download directory                                                 |
+|  `{name}`         | Torrent's name                                                     |
 
 ## Keybindings
 
@@ -61,18 +77,12 @@ Example config:
 
 ## Betterships
 * Low memory usage even with thousands of torrents
-* VIM-compatible keys
+* VIM-like keys
+* Organize your torrents with folders
 
-## Disclaimer
-I've got a bit of specific workflow were I got like 3k+ torrents on my NAS computer, sorted into folders under the common root, debian iso mirrors, you know.
-Essentially I want to filter my torrents by its folder name, but most of the clients don't provide such luxuries.
-Also most of the existing clients waste ~1G of mem with my set-up. 
-This is an outrage! I just want a bloody list of torrents filtered by directory, is this too much to ask?
-
-
-## Prior art:
+## Similar projects:
 * `transmission-remote`
-* `Fragments` (quite good)
+* `Fragments`
 * `transmission-qt` 
 * `transmission-gtk` 
 * `transmission-remote-gtk`

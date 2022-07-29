@@ -4,7 +4,9 @@ use std::fs::{create_dir_all, write, File};
 use std::io::BufReader;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ExternalCommand {
+pub struct Action {
+    pub description: String,
+    pub shortcut: String,
     pub cmd: String,
     pub args: Vec<String>,
 }
@@ -19,13 +21,14 @@ pub struct DirMapping {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     pub connection_name: String,
+    pub username: String,
+    pub password: String,
     pub connection_string: String,
 //    pub directories: Vec<String>,
     pub remote_base_dir: String,
     pub local_base_dir: String,
     pub refresh_interval: u16,
-    pub file_manager: ExternalCommand,
-    pub terminal: ExternalCommand,
+    pub actions: Vec<Action>,
 }
 
 impl Config {
@@ -45,19 +48,13 @@ impl Config {
 fn empty_config() -> Config {
     Config {
         connection_name: String::from("localhost"),
+        username: String::from(""),
+        password: String::from(""),
         connection_string: String::from(""),
- //       directories: vec![],
         remote_base_dir: "".to_string(),
         local_base_dir: "".to_string(),
         refresh_interval: 3,
-        file_manager: ExternalCommand {
-            cmd: "nautilus".to_string(),
-            args: vec!["{location}".to_string()],
-        },
-        terminal: ExternalCommand {
-            cmd: "alacritty".to_string(),
-            args: vec!["--working-directory".to_string(), "{location}".to_string()],
-        },
+        actions: vec![]
     }
 }
 pub fn get_or_create_config() -> Config {

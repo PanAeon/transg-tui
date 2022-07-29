@@ -1,13 +1,12 @@
 mod command_processor;
 mod config;
-mod notification_utils;
 mod torrent_stats;
 mod transmission;
 mod utils;
 
 use binary_heap_plus::BinaryHeap;
 use command_processor::{TorrentCmd, TorrentUpdate};
-use config::Config;
+use config::{Config, Action};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyCode},
     execute,
@@ -64,7 +63,8 @@ pub enum Transition {
     Move,
     Files,
     Help,
-    Find(bool, usize)
+    Find(bool, usize),
+    ChooseSortFunc
 }
 
 impl Transition {
@@ -99,12 +99,33 @@ pub fn calculate_folder_keys(app: &mut App, skip_folder: Option<String>) {
     app.folder_mapping = mappings;
 }
 
+pub struct SortFunction {
+    pub name: String,
+    pub func: fn(&mut [TorrentInfo]) -> () 
+}
+
+fn by_date_added(xs: &mut [TorrentInfo]) {
+    xs.sort_unstable_by_key(|x| -x.added_date);
+}
+
+fn by_size(xs: &mut [TorrentInfo]) {
+    xs.sort_unstable_by_key(|x| -x.size_when_done);
+}
+
+fn by_ratio(xs: &mut [TorrentInfo]) {
+    xs.sort_unstable_by_key(|x| (-x.upload_ratio * 1000.0) as i64);
+}
+
+fn by_uploaded(xs: &mut [TorrentInfo]) {
+    xs.sort_unstable_by_key(|x| -x.uploaded_ever);
+}
+
 pub struct App<'a> {
     pub transition: Transition,
     pub prev_transition: Transition,
     pub left_filter_state: ListState,
     pub main_table_state: TableState,
-    pub memory_usage: u64,
+   // pub memory_usage: u64,
     pub torrents: HashMap<i64, TorrentInfo>,
     pub filtered_torrents: Vec<TorrentInfo>,
     pub free_space: u64,
@@ -120,14 +141,14 @@ pub struct App<'a> {
     pub details: Option<TorrentDetails>,
     pub tree_items: Vec<TreeItem<'a>>,
     pub config: Config,
-    pub err: Option<(String, String)>
+    pub err: Option<(String, String)>,
+    pub sort_func: SortFunction
 }
 
 impl Default for App<'_> {
     fn default() -> Self {
         let left_filter_state = ListState::default();
         let main_table_state = TableState::default();
-        let memory_usage: u64 = 0;
         let torrents: HashMap<i64, TorrentInfo> = HashMap::new();
         let filtered_torrents: Vec<TorrentInfo> = vec![];
         let free_space: u64 = 0;
@@ -140,7 +161,6 @@ impl Default for App<'_> {
             prev_transition: Transition::MainScreen,
             left_filter_state,
             main_table_state,
-            memory_usage,
             torrents,
             filtered_torrents,
             free_space,
@@ -156,7 +176,8 @@ impl Default for App<'_> {
             details: None,
             tree_items: vec![],
             config,
-            err: None
+            err: None,
+            sort_func: SortFunction { name: String::from("Date Added"), func: by_date_added }
         }
     }
 }
@@ -259,6 +280,9 @@ fn run_app<B: Backend>(
                                     app.tree_state = TreeState::default();
                                     open_first_level(&mut app);
                                 }
+                                KeyCode::Char('S') => {
+                                    app.transition = Transition::ChooseSortFunc;
+                                }
                                 KeyCode::Esc => {
                                     if let Filter::Search(_) = app.current_filter {
                                         app.current_filter = Filter::Recent;
@@ -269,26 +293,6 @@ fn run_app<B: Backend>(
                         }
                         Transition::Action => match event.code {
                             KeyCode::Char(' ') | KeyCode::Esc => {
-                                app.transition = Transition::MainScreen;
-                            }
-                            KeyCode::Char('o') => {
-                                if let Some(x) = app
-                                    .main_table_state
-                                    .selected()
-                                    .and_then(|x| app.filtered_torrents.get(x))
-                                {
-                                    sender.blocking_send(TorrentCmd::OpenDlDir(x.id)).expect("should send");
-                                }
-                                app.transition = Transition::MainScreen;
-                            }
-                            KeyCode::Char('t') => {
-                                if let Some(x) = app
-                                    .main_table_state
-                                    .selected()
-                                    .and_then(|x| app.filtered_torrents.get(x))
-                                {
-                                    sender.blocking_send(TorrentCmd::OpenDlTerm(x.id)).expect("should send");
-                                }
                                 app.transition = Transition::MainScreen;
                             }
                             KeyCode::Char('s') => {
@@ -402,6 +406,18 @@ fn run_app<B: Backend>(
                                 }
                                 app.transition = Transition::MainScreen;
                             }
+                            KeyCode::Char(c) => {
+                                if let Some(x) = app
+                                    .main_table_state
+                                    .selected()
+                                    .and_then(|x| app.filtered_torrents.get(x))
+                                {
+                                    if let Some(idx) = app.config.actions.iter().enumerate().find(|x| x.1.shortcut.starts_with(c)) {
+                                        sender.blocking_send(TorrentCmd::Action(x.id, idx.0)).expect("should send");
+                                    }
+                                }
+                                app.transition = Transition::MainScreen;
+                            }
                             _ => {}
                         },
                         Transition::Filter => match event.code {
@@ -427,7 +443,7 @@ fn run_app<B: Backend>(
                                         .filter(|y| y.download_dir == x.0)
                                         .cloned()
                                         .collect();
-                                    app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
+                                    (app.sort_func.func)(&mut app.filtered_torrents);
                                     select_first_torrent(&mut app, sender.clone());
                                 } else {
                                     match c {
@@ -454,7 +470,7 @@ fn run_app<B: Backend>(
                                                 .filter(|x| x.status == STOPPED)
                                                 .cloned()
                                                 .collect();
-                                            app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
+                                            (app.sort_func.func)(&mut app.filtered_torrents);
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'L' => {
@@ -462,7 +478,7 @@ fn run_app<B: Backend>(
                                             app.transition = Transition::MainScreen;
                                             app.left_filter_state.select(Some(10));
                                             app.filtered_torrents = app.torrents.values().cloned().collect();
-                                            app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
+                                            (app.sort_func.func)(&mut app.filtered_torrents);
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'G' => {
@@ -475,7 +491,7 @@ fn run_app<B: Backend>(
                                                 .filter(|x| x.status == VERIFY_QUEUED)
                                                 .cloned()
                                                 .collect();
-                                            app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
+                                            (app.sort_func.func)(&mut app.filtered_torrents);
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'C' => {
@@ -488,7 +504,7 @@ fn run_app<B: Backend>(
                                                 .filter(|x| x.status == VERIFYING)
                                                 .cloned()
                                                 .collect();
-                                            app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
+                                            (app.sort_func.func)(&mut app.filtered_torrents);
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'Q' => {
@@ -501,7 +517,7 @@ fn run_app<B: Backend>(
                                                 .filter(|x| x.status == DOWN_QUEUED)
                                                 .cloned()
                                                 .collect();
-                                            app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
+                                            (app.sort_func.func)(&mut app.filtered_torrents);
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'D' => {
@@ -514,7 +530,7 @@ fn run_app<B: Backend>(
                                                 .filter(|x| x.status == DOWNLOADING)
                                                 .cloned()
                                                 .collect();
-                                            app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
+                                            (app.sort_func.func)(&mut app.filtered_torrents);
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'U' => {
@@ -527,7 +543,7 @@ fn run_app<B: Backend>(
                                                 .filter(|x| x.status == SEED_QUEUED)
                                                 .cloned()
                                                 .collect();
-                                            app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
+                                            (app.sort_func.func)(&mut app.filtered_torrents);
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'S' => {
@@ -540,7 +556,7 @@ fn run_app<B: Backend>(
                                                 .filter(|x| x.status == SEEDING)
                                                 .cloned()
                                                 .collect();
-                                            app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
+                                            (app.sort_func.func)(&mut app.filtered_torrents);
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'E' => {
@@ -687,11 +703,35 @@ fn run_app<B: Backend>(
                             KeyCode::Up | KeyCode::Char('k') => move_up_down(&mut app, false),
                             _ => {}
                         },
+                        Transition::ChooseSortFunc => match event.code {
+                            KeyCode::Esc => { app.transition = Transition::MainScreen; }
+                            KeyCode::Char('d') => {
+                                app.sort_func = SortFunction { name: String::from("Date Added"), func: by_date_added };
+                                (app.sort_func.func)(&mut app.filtered_torrents);
+                                app.transition = Transition::MainScreen;
+                            }
+                            KeyCode::Char('s') => {
+                                app.sort_func = SortFunction { name: String::from("by size"), func: by_size };
+                                (app.sort_func.func)(&mut app.filtered_torrents);
+                                app.transition = Transition::MainScreen;
+                            }
+                            KeyCode::Char('r') => {
+                                app.sort_func = SortFunction { name: String::from("by ratio"), func: by_ratio };
+                                (app.sort_func.func)(&mut app.filtered_torrents);
+                                app.transition = Transition::MainScreen;
+                            }
+                            KeyCode::Char('u') => {
+                                app.sort_func = SortFunction { name: String::from("by uploaded"), func: by_uploaded };
+                                (app.sort_func.func)(&mut app.filtered_torrents);
+                                app.transition = Transition::MainScreen;
+                            }
+                            _ => {}
+                        }
                     }
                 }
             },
 
-            Some(TorrentUpdate::Partial(json, removed, _i, session_stats, free_space_opt, mem, details)) => {
+            Some(TorrentUpdate::Partial(json, removed, _i, session_stats, free_space_opt, details)) => {
                 app.details = *details;
                 app.err = None;
 
@@ -705,7 +745,7 @@ fn run_app<B: Backend>(
                 if let Some(s) = free_space_opt {
                     app.free_space = s.size_bytes;
                 }
-                app.memory_usage = mem;
+                //app.memory_usage = mem;
 
                 let removed: Vec<i64> = removed
                     .as_array()
@@ -718,6 +758,9 @@ fn run_app<B: Backend>(
                 }
                 let xs = json.as_array().unwrap().clone();
 
+                //let prev_length = app.torrents.len();
+                //let prev_filtered_length = app.filtered_torrents.len();
+
                 for x in xs.iter().skip(1) {
                     let ys = x.as_array().unwrap();
                     let id = ys[0].as_i64().unwrap();
@@ -728,7 +771,9 @@ fn run_app<B: Backend>(
                     }
                 }
                 app.num_active = xs.len() - 1;
-                app.groups = update_torrent_stats(&app.torrents);
+                //if app.torrents.len() != prev_length || app.filtered_torrents.is_empty() {
+                  app.groups = update_torrent_stats(&app.torrents);
+                //}
                 match app.current_filter.clone() {
                     Filter::Search(text) => {
                         app.filtered_torrents = app
@@ -737,32 +782,42 @@ fn run_app<B: Backend>(
                             .filter(|x| x.name.to_lowercase().contains(&text.to_lowercase()))
                             .cloned()
                             .collect();
+                        (app.sort_func.func)(&mut app.filtered_torrents);
                     }
                     Filter::ByDirectory(_) => {
                         if let Filter::ByDirectory(d) = app.current_filter.clone() {
                             app.filtered_torrents =
-                                app.torrents.values().filter(|x| x.download_dir == d).cloned().collect();
+                            app.torrents.values().filter(|x| x.download_dir == d).cloned().collect();
+                            (app.sort_func.func)(&mut app.filtered_torrents);
                         }
                     }
                     Filter::ByStatus(_) => {
                         if let Filter::ByStatus(s) = app.current_filter.clone() {
                             app.filtered_torrents = app.torrents.values().filter(|x| x.status == s).cloned().collect();
+                            (app.sort_func.func)(&mut app.filtered_torrents);
                         }
                     }
                     Filter::All => {
                         app.filtered_torrents = app.torrents.values().cloned().collect();
+                        (app.sort_func.func)(&mut app.filtered_torrents);
                     }
                     Filter::Active => {
                         app.filtered_torrents = xs.iter().skip(1).map(TorrentInfo::new).collect();
+                       (app.sort_func.func)(&mut app.filtered_torrents);
                     }
                     Filter::Recent => {
-                        app.filtered_torrents = most_recent_items(&app.torrents);
+                       // if app.torrents.len() != prev_length || app.filtered_torrents.is_empty() {
+                           app.filtered_torrents = most_recent_items(&app.torrents);
+                        //}
+                        if app.sort_func.name != "Date Added" {
+                          (app.sort_func.func)(&mut app.filtered_torrents);
+                        }
                     }
                     Filter::Error => {
                         app.filtered_torrents = app.torrents.values().filter(|x| x.error > 0).cloned().collect();
+                        (app.sort_func.func)(&mut app.filtered_torrents);
                     }
                 }
-                app.filtered_torrents.sort_unstable_by_key(|x| -x.added_date);
                 if app.main_table_state.selected().is_none() {
                     select_first_torrent(&mut app, sender.clone());
                 }
@@ -778,11 +833,13 @@ fn run_app<B: Backend>(
                 app.torrents = HashMap::from_iter(ts);
                 app.groups = update_torrent_stats(&app.torrents);
                 app.left_filter_state.select(Some(0));
+                let _ = sender.blocking_send(TorrentCmd::Tick(0));
+                
 
-                let mut xs: Vec<_> = app.torrents.values().cloned().collect();
-                xs.sort_by_key(|x| -x.added_date);
-                xs.truncate(150);
-                app.filtered_torrents = xs;
+                //let mut xs: Vec<_> = app.torrents.values().cloned().collect();
+                //xs.sort_by_key(|x| -x.added_date);
+                //xs.truncate(150);
+                //app.filtered_torrents = xs;
             }
             Some(TorrentUpdate::Details(details)) => {
                 app.details = Some(*details);
@@ -853,8 +910,8 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
     let status = Paragraph::new(Spans::from(vec![
         //Span::styled(format!("W: {}, H: {} ", frame.size().width, frame.size().height), Style::default()),
         Span::styled(format!("🔨 {}", app.config.connection_name), Style::default()),
-        Span::styled(" | Client Mem: ", Style::default()),
-        Span::styled(format_size(app.memory_usage as i64), Style::default().fg(Color::Yellow)),
+        //Span::styled(" | Client Mem: ", Style::default()),
+        //Span::styled(format_size(app.memory_usage as i64), Style::default().fg(Color::Yellow)),
         Span::styled(" | Free Space: ", Style::default()),
         Span::styled(format_size(app.free_space as i64), Style::default().fg(Color::Yellow)),
         Span::styled(" | Up: ", Style::default()),
@@ -909,7 +966,7 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
 
     match app.transition {
         Transition::Help => {
-            let help = render_help();
+            let help = help_dialog();
             frame.render_widget(help, chunks[1]);
         }
         Transition::Files => {
@@ -972,7 +1029,7 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(2), Constraint::Length(15)].as_ref())
                 .split(block.inner(area));
-            let list = action_menu();
+            let list = action_menu(&app.config.actions);
             frame.render_widget(Clear, area);
             frame.render_widget(block, area);
 
@@ -1014,6 +1071,12 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 move_dialog(frame, &x.name, &app.folder_mapping, &app.config);
             }
         }
+        Transition::ChooseSortFunc => {
+                let area = centered_rect(26, 35, size);
+                let block = choose_sort_dialog();
+                frame.render_widget(Clear, area);
+                frame.render_widget(block, area);
+        }
         _ => {}
     }
     if let Some((msg, details)) = &app.err {
@@ -1025,7 +1088,7 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
     }
 }
 
-fn render_help<'a>() -> Paragraph<'a> {
+fn help_dialog<'a>() -> Paragraph<'a> {
     let home = Paragraph::new(vec![
         Spans::from(vec![Span::raw("")]),
         Spans::from(vec![Span::styled(
@@ -1035,7 +1098,7 @@ fn render_help<'a>() -> Paragraph<'a> {
         Spans::from(vec![Span::raw("Navigation: 'hjkl' or '← ↑ → ↓'. Apply filters: 'f'. ")]),
         Spans::from(vec![Span::raw("Global search s. Search list forward /, backward ?.")]),
         Spans::from(vec![Span::raw(
-            "Action: 'space'. This screen: 'F1'. Details: 'd'. Exit 'q'",
+            "Action: 'space'. This screen: 'F1'. Sort 'S'. Details: 'd'. Exit 'q'",
         )]),
         Spans::from(vec![Span::raw("Configuration file: ~/.config/transg/config.json")]),
     ])
@@ -1112,7 +1175,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (mut processor, rx) = command_processor::CommandProcessor::create();
 
     let app = App::default();
-    processor.run(app.config.clone(), true, true);
+    processor.run(app.config.clone(), true);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -1304,27 +1367,34 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-fn action_menu<'a>() -> List<'a> {
-    let xs = vec![
-        ("o", "    Open in file manager"),
-        ("t", "    Open in terminal"),
-        ("", "──────────────────────────────────"),
-        ("s", "    Start"),
-        ("S", "    Start Now"),
-        ("p", "    Pause"),
-        ("v", "    Verify"),
-        ("m", "    Move"),
-        ("x", "    Remove"),
-        ("X", "    Remove with data"),
-        ("", "──────────────────────────────────"),
-        ("k", "    Queue Up"),
-        ("j", "    Queue Down"),
-        ("K", "    Queue Top"),
-        ("J", "    Queue Bottom"),
+fn action_menu(actions: &[Action]) -> List {
+    let mut xs: Vec<(&str, &str)> = actions.iter().map(|x| (x.shortcut.as_str(), x.description.as_str())).collect(); 
+    
+    
+    let mut ys = vec![
+        ("", "───"),
+        ("s", "Start"),
+        ("S", "Start Now"),
+        ("p", "Pause"),
+        ("v", "Verify"),
+        ("m", "Move"),
+        ("x", "Remove"),
+        ("X", "Remove with data"),
+        ("", "───"),
+        ("k", "Queue Up"),
+        ("j", "Queue Down"),
+        ("K", "Queue Top"),
+        ("J", "Queue Bottom"),
     ];
+    xs.append(&mut ys);
     let items: Vec<_> = xs
         .iter()
         .map(|x| {
+            let desc = if x.0.is_empty() {
+                  "──────────────────────────────────".to_string()
+            } else {
+               "    ".to_owned() + x.1
+            };
             ListItem::new(Spans::from(vec![
                 Span::styled(
                     x.0,
@@ -1332,7 +1402,7 @@ fn action_menu<'a>() -> List<'a> {
                         .add_modifier(Modifier::UNDERLINED)
                         .fg(Color::LightYellow),
                 ),
-                Span::styled(x.1, Style::default()),
+                Span::styled(desc, Style::default()),
             ]))
         })
         .collect();
@@ -1353,6 +1423,25 @@ fn error_dialog<'a>(msg: &'a str, details: &'a str) -> Paragraph<'a> {
     .block(Block::default().title("Aarrgh!").borders(Borders::ALL).border_style(Style::default().fg(Color::Red)));
     message
 }
+
+fn choose_sort_dialog<'a>() -> Paragraph<'a> {
+    let key_style = Style::default()
+                        .add_modifier(Modifier::UNDERLINED)
+                        .fg(Color::LightYellow);
+    let lines = vec![
+        Spans::from(vec![Span::raw("")]),
+        Spans::from(vec![Span::styled(" Choose sort function:", Style::default())]),
+        Spans::from(vec![Span::raw("")]),
+        Spans::from(vec![Span::raw(" By "), Span::styled("d",key_style), Span::raw("ate added (default)")]),
+        Spans::from(vec![Span::raw(" By "), Span::styled("u",key_style), Span::raw("ploaded total")]),
+        Spans::from(vec![Span::raw(" By "), Span::styled("s",key_style), Span::raw("ize")]),
+        Spans::from(vec![Span::raw(" By "), Span::styled("r",key_style), Span::raw("atio")]),
+    ];
+    let message = Paragraph::new(lines)
+    .block(Block::default().title("Sort").borders(Borders::ALL).border_style(Style::default()));
+    message
+}
+
 fn delete_confirmation_dialog(with_data: bool, name: &str) -> Paragraph {
     let block = Block::default().title("Confirm").borders(Borders::ALL);
     let message = Paragraph::new(Spans::from(vec![

@@ -1,11 +1,40 @@
 use serde::de::DeserializeOwned;
+use reqwest::header;
 use serde_json::json;
 use serde_json::Value;
 //use std::cell::RefCell;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::sync::Mutex;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+#[derive(Debug, Clone)]
+struct HttpError {
+    description: String
+}
+
+impl HttpError {
+    pub fn new(s: &str) -> Self {
+        HttpError {
+            description: String::from(s)
+        }
+    } 
+}
+
+
+impl std::error::Error for HttpError {
+    fn description(&self) -> &str {
+        self.description.as_str()
+    }
+}
+
+impl fmt::Display for HttpError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Http Error: {}", self.description)
+    }
+}
+
 
 #[derive(Debug, Clone)]
 pub struct TorrentInfo {
@@ -348,13 +377,35 @@ pub struct TorrentAdd {
     pub priority_normal: Option<Vec<i64>>,
 }
 
+static APP_USER_AGENT: &str = concat!(
+    env!("CARGO_PKG_NAME"),
+    "/",
+    env!("CARGO_PKG_VERSION"),
+);
+
 // FIXME: how to work with http errors? async errors?
 // від заумі інтелігентськой, митця пожалуста спасі, щоб естетичний код продукту розшифрувать могли
 // усі
 impl TransmissionClient {
-    pub fn new(url: &str) -> TransmissionClient {
+    pub fn new(url: &str, username: &str, password: &str) -> TransmissionClient {
+        let b = reqwest::Client::builder()
+            .user_agent(APP_USER_AGENT);
+
+        let mut headers = header::HeaderMap::new();
+
+        if !username.is_empty() {
+            let p = username.to_owned() + ":" + password; 
+
+            let secret = "Basic ".to_owned() + &base64::encode(p.as_bytes());
+            let mut auth_value = header::HeaderValue::from_str(&secret).expect("encode secret");
+            auth_value.set_sensitive(true);
+            headers.insert(header::AUTHORIZATION, auth_value);
+        }
+
+        let b = b.default_headers(headers);
+
         TransmissionClient {
-            client: reqwest::Client::new(),
+            client: b.build().expect("Can't create reqwest http client!"),
             session_id: Mutex::new("".to_string()),
             url: url.to_string(),
         }
@@ -607,7 +658,10 @@ impl TransmissionClient {
                     .send()
                     .await?
             }
-            _ => response,
+            reqwest::StatusCode::FORBIDDEN => return Err(Box::new(HttpError::new("Forbidden.Check your priviledge."))),
+            reqwest::StatusCode::UNAUTHORIZED => return Err(Box::new(HttpError::new("Unauthorized. Please, provide valid username and password."))),
+            x if x.is_success() => response,
+            other => return Err(Box::new(HttpError::new(&format!("Code: {}", other))))
         };
         let json = response.json().await?;
         //println!("Response body: {:#?}", json);

@@ -17,16 +17,20 @@ pub struct DirMapping {
     pub remote_path: String,
     pub local_path: String,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Connection {
+    pub name: String,
+    pub username: String,
+    pub password: String,
+    pub url: String,
+    pub remote_base_dir: String,
+    pub local_base_dir: String,
+}
 // hmm, now it's public mutable.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
-    pub connection_name: String,
-    pub username: String,
-    pub password: String,
-    pub connection_string: String,
-//    pub directories: Vec<String>,
-    pub remote_base_dir: String,
-    pub local_base_dir: String,
+    pub connections: Vec<Connection>,
     pub refresh_interval: u16,
     pub actions: Vec<Action>,
 }
@@ -47,13 +51,16 @@ impl Config {
 
 fn empty_config() -> Config {
     Config {
-        connection_name: String::from("localhost"),
+        connections: vec![Connection {
+        name: String::from("localhost"),
         username: String::from(""),
         password: String::from(""),
-        connection_string: String::from(""),
+        url: String::from(""),
         remote_base_dir: "".to_string(),
         local_base_dir: "".to_string(),
-        refresh_interval: 3,
+
+        }],
+        refresh_interval: 1200,
         actions: vec![]
     }
 }
@@ -63,7 +70,7 @@ pub fn get_or_create_config() -> Config {
     if !config_dir.exists() {
         create_dir_all(&config_dir).expect("can't create ~/.config/transg");
     }
-    let config_path = config_dir.join("config.json");
+    let config_path = config_dir.join("transg-tui.json");
     if !config_path.exists() {
         let cfg = serde_json::to_string(&empty_config()).expect("should serialize");
         write(&config_path, cfg).unwrap_or_else(|_| panic!("Failed to create {:?}", &config_path));

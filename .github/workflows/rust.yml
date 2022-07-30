@@ -11,8 +11,13 @@ env:
 
 jobs:
   build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
-    runs-on: ubuntu-latest
+      #runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v3
@@ -25,11 +30,12 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Build
-      run: cargo build --release --verbose
+      run: cargo build --release
+    - name: Run tests
+      run: cargo test
     - name: 'Upload Artifact'
       uses: actions/upload-artifact@v3
+      if: ${{ github.event_name == 'push' }}
       with:
-        name: transg-tui
+        name: transg-tui-linux-x64
         path: target/release/transgression-tui 
-    - name: Run tests
-      run: cargo test --verbose

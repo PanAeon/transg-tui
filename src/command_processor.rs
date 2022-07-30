@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{Config, Connection};
 use crate::transmission::{FreeSpace, Result, SessionStats, TorrentAdd, TorrentDetails, TransmissionClient};
 use crate::utils::build_tree;
 use crossterm::event::{self, KeyEvent};
@@ -49,7 +49,8 @@ pub enum TorrentCmd {
     Reannounce(Vec<i64>),
     Move(Vec<i64>, String, bool),
     AddTorrent(Option<String>, Option<String>, Option<String>, bool), // download dir, filename, metainfo, start_paused
-                                                                      //PoisonPill()
+    //PoisonPill,
+    Reconnect(usize)
 }
 
 lazy_static! {
@@ -101,8 +102,9 @@ impl CommandProcessor {
         self.sender.clone()
     }
 
-    pub fn run(&mut self, config: Config, ping: bool) {
+    pub fn run(&mut self, config: Config, connection_idx: usize) {
         let sender = self.sender.clone();
+        let mut connection = config.connections[connection_idx].clone();
 
         let update_sender = self.update_sender.clone();
         let update_sender2 = self.update_sender.clone();
@@ -122,9 +124,13 @@ impl CommandProcessor {
                         .checked_sub(last_tick.elapsed())
                         .unwrap_or_else(|| Duration::from_secs(0));
 
+                    if sender.is_closed() || update_sender2.is_closed() {
+                            break;
+                    }
+
                     if event::poll(timeout).expect("poll works") {
                         if let event::Event::Key(key) = event::read().expect("can read events") {
-                            update_sender2.send(TorrentUpdate::Input(key)).await.expect("can send events");
+                            let _ = update_sender2.send(TorrentUpdate::Input(key)).await;
                         }
                     }
 
@@ -137,7 +143,7 @@ impl CommandProcessor {
                         last_tick_cmd = Instant::now();
                         if sender.send(TorrentCmd::Tick(i)).await.is_ok() {
                             i += 1;
-                        }
+                        } 
                     }
                 }
             });
@@ -148,42 +154,26 @@ impl CommandProcessor {
         std::thread::spawn(move || {
             let rt = Runtime::new().expect("can't create runtime");
             rt.block_on(async move {
-                let client = TransmissionClient::new(&config.connection_string, &config.username, &config.password);
-                if ping {
-                    let res = client.get_all_torrents(&TORRENT_INFO_FIELDS).await;
-                    if let Err(error) = res {
-                        update_sender
-                            .send(TorrentUpdate::Err {
-                                msg: "Can't connect to transmission!".to_string(),
-                                details: format!("Please, check connection string and restart the app:\n\n{}",  error),
-                            })
-                            .await
-                            .expect("blah");
-                            return;
-                    } else {
-                        let response = res.unwrap();
-                        let ts = response.get("arguments").unwrap().get("torrents").unwrap().to_owned();
-                        update_sender.send(TorrentUpdate::Full(ts)).await.expect("foo");
-                    }
-                }
+                let mut client = TransmissionClient::new(&connection.url, &connection.username, &connection.password);
+                let _ = send_full_update(&client, &update_sender).await;
                 let mut details_id: Option<i64> = None;
                 loop {
                     let result = update_step(
                         &mut receiver,
                         &update_sender,
                         &mut details_id,
-                        &client,
-                        &config
+                        &mut client,
+                        &config,
+                        &mut connection
                     )
                     .await;
                     if let Err(error) = result {
-                        update_sender
+                        let _ = update_sender
                             .send(TorrentUpdate::Err {
                                 msg: "Communication failed".to_string(),
                                 details: error.to_string(),
                             })
-                            .await
-                            .expect("blah");
+                            .await;
                     }
                 }
             })
@@ -191,31 +181,57 @@ impl CommandProcessor {
     }
 }
 
+async fn send_full_update(
+    client: &TransmissionClient,
+    update_sender: &mpsc::Sender<TorrentUpdate>,
+    ) -> Result<()> {
+                    let res = client.get_all_torrents(&TORRENT_INFO_FIELDS).await;
+                    if let Err(error) = res {
+                        let _ = update_sender
+                            .send(TorrentUpdate::Err {
+                                msg: "Can't connect to transmission!".to_string(),
+                                details: format!("Please, check connection string and restart the app:\n\n{}",  error),
+                            })
+                            .await;
+                    } else {
+                        let response = res.unwrap();
+                        let ts = response.get("arguments").unwrap().get("torrents").unwrap().to_owned();
+                        let _ = update_sender.send(TorrentUpdate::Full(ts)).await;
+                    }
+    Ok(())
+
+}
+
 async fn update_step(
     receiver: &mut mpsc::Receiver<TorrentCmd>,
     update_sender: &mpsc::Sender<TorrentUpdate>,
     details_id: &mut Option<i64>,
-    client: &TransmissionClient,
-    config: &Config
+    client: &mut TransmissionClient,
+    config: &Config,
+    connection: &mut Connection
 ) -> Result<()> {
-    let cmd = receiver.recv().await.expect("probably ticker thread panicked");
+    let cmd = receiver.recv().await.expect("hmm, need to handle this error");
 
     match cmd {
         TorrentCmd::Select(maybe_id) => {
             *details_id = maybe_id;
         }
+        TorrentCmd::Reconnect(idx) => {
+            *connection = config.connections[idx].clone();
+            *client = TransmissionClient::new(&connection.url, &connection.username, &connection.password);
+            let _ = send_full_update(client, update_sender).await;
+            *details_id = None;
+
+        }
         TorrentCmd::GetDetails(id) => {
             *details_id = Some(id);
             let details = client.get_torrent_details(vec![id]).await?; // TODO: what if id is wrong?
             if !details.arguments.torrents.is_empty() {
-                let res = update_sender
+                update_sender
                     .send(TorrentUpdate::Details(Box::new(
                         details.arguments.torrents[0].to_owned(),
                     )))
-                    .await;
-                if res.is_err() {
-                    println!("{:#?}", res.err().unwrap());
-                }
+                    .await?;
             }
         }
         TorrentCmd::Tick(i) => {
@@ -227,7 +243,7 @@ async fn update_step(
             let session_stats = Some(stats.arguments);
 
             let free_space = if i % 60 == 0 {
-                let free_space = client.get_free_space(&config.remote_base_dir).await?;
+                let free_space = client.get_free_space(&connection.remote_base_dir).await?;
                 Some(free_space.arguments)
             } else {
                 None
@@ -245,7 +261,7 @@ async fn update_step(
                     maybe_details = Some(details.arguments.torrents[0].to_owned());
                 }
             }
-            update_sender
+            let _ = update_sender
                 .send(TorrentUpdate::Partial(
                     torrents,
                     removed,
@@ -254,15 +270,14 @@ async fn update_step(
                     free_space,
                     Box::new(maybe_details),
                 ))
-                .await
-                .expect("blah");
+                .await;
         }
         TorrentCmd::Action(id, idx) => {
             let details = client.get_torrent_details(vec![id]).await?; // TODO: what if id is wrong?
             if !details.arguments.torrents.is_empty() {
                 let torrent = &details.arguments.torrents[0];
                 let location = torrent.download_dir.clone();
-                let my_loc = location.replace(&config.remote_base_dir, &config.local_base_dir);
+                let my_loc = location.replace(&connection.remote_base_dir, &connection.local_base_dir);
                 let me_loc2 = my_loc.clone();
                 let tree = build_tree(&details.arguments.torrents[0].files);
                 let p = my_loc + "/" + &tree[0].path;
@@ -282,7 +297,7 @@ async fn update_step(
                                .replace("{name}", &torrent.name);
                     cmd_builder.arg(&arg);
                 }
-                cmd_builder.spawn().expect("failed to spawn"); // FIXME: this expect is really unnecessary
+                cmd_builder.spawn()?; // TODO: differentiate between different kind of errors 
             }
         }
         TorrentCmd::QueueMoveUp(ids) => {
@@ -344,6 +359,7 @@ async fn update_step(
                 .unwrap()
                 .to_string();
         }
+
     };
     Ok(())
 }

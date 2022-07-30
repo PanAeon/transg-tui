@@ -29,17 +29,19 @@ nix run github:PanAeon/transg-tui
 
 ## Configuration
 
-Configuration file uses JSON and is located at `~/.config/transg/config.json`
+JSON configuration file is located at `~/.config/transg/transg-tui.json`
 
 Example config:
 ```json
 {
-  "connection_name": "localhost",
-  "connection_string": "http://127.0.0.1:9091/transmission/rpc",
-  "username": "",
-  "password": "",
-  "remote_base_dir": "/var/lib/transmission/torrents",
-  "local_base_dir": "/var/mount/torrents",
+  "connections": [{
+      "name": "localhost",
+      "url": "http://127.0.0.1:9091/transmission/rpc",
+      "username": "",
+      "password": "",
+      "remote_base_dir": "/var/lib/transmission/torrents",
+      "local_base_dir": "/var/mount/torrents"
+  }],
   "refresh_interval": 1200,
   "actions": [{
     "description": "open in nautilus",
@@ -57,28 +59,31 @@ Example config:
 ```
 Substitutions:
 
-|  Token            | Description                                                        |
-| ----------------- | ------------------------------------------------------------------ |
-|  `{location}`     | If torrent contains folder then this folder else its download dir  |
-|  `{id}`           | Torrent's id                                                       |
-|  `{download_dir}` | Download directory                                                 |
-|  `{name}`         | Torrent's name                                                     |
+|  Token            | Description                                                          |
+| ----------------- | -------------------------------------------------------------------- |
+|  `{location}`     | If torrent contains a folder then this folder else its download dir  |
+|  `{id}`           | Torrent's id                                                         |
+|  `{download_dir}` | Download directory                                                   |
+|  `{name}`         | Torrent's name                                                       |
 
 ## Keybindings
 
 `Transg` tries to be both compatible with VIM, but also utilize easy to remember mnemonics when possible:
 * `hjkl` or `cursor keys`  - navigation
 * `F1`                     - Help screen
-*  `f`                     - Filter select
+*  `f`                     - Filter menu
+* `S`                      - Sort menu
 * `space`                  - action menu
 * `/` and `?`              - find in list ff/rw
 * `s`                      - Search all torrents
+* `c`                      - connection menu
 * `q`                      - Quit
 
 ## Betterships
 * Low memory usage even with thousands of torrents
 * VIM-like keys
 * Organize your torrents with folders
+* Run custom external commands
 
 ## Similar apps:
 * `transmission-remote`

@@ -6,14 +6,13 @@ mod utils;
 
 use binary_heap_plus::BinaryHeap;
 use command_processor::{TorrentCmd, TorrentUpdate};
-use config::{Config, Action};
+use config::{Config, Action, Connection};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use std::{collections::HashMap, io};
-use thiserror::Error;
 use tokio::sync::mpsc::{Receiver, Sender};
 use torrent_stats::{update_torrent_stats, TorrentGroupStats, DOWNLOADING, SEED_QUEUED, VERIFYING};
 use transmission::{SessionStats, TorrentDetails, TorrentInfo};
@@ -34,13 +33,6 @@ use utils::{
     process_folder, utf8_split, DOWN_QUEUED, SEEDING, STOPPED, VERIFY_QUEUED,
 };
 
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("error reading the DB file: {0}")]
-    ReadDBError(#[from] io::Error),
-    #[error("error parsing the DB file: {0}")]
-    ParseDBError(#[from] serde_json::Error),
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Filter {
@@ -64,7 +56,8 @@ pub enum Transition {
     Files,
     Help,
     Find(bool, usize),
-    ChooseSortFunc
+    ChooseSortFunc,
+    Connection
 }
 
 impl Transition {
@@ -87,7 +80,7 @@ pub fn calculate_folder_keys(app: &mut App, skip_folder: Option<String>) {
     let mut mappings: Vec<(String, char, usize)> = vec![];
 
     folder_items.iter().for_each(|x| {
-        let name = process_folder(x, &app.config.remote_base_dir);
+        let name = process_folder(x, &app.config.connections[app.connection_idx].remote_base_dir);
 
         let (i, c) = name
             .chars()
@@ -142,7 +135,31 @@ pub struct App<'a> {
     pub tree_items: Vec<TreeItem<'a>>,
     pub config: Config,
     pub err: Option<(String, String)>,
-    pub sort_func: SortFunction
+    pub sort_func: SortFunction,
+    pub connection_idx: usize
+}
+
+impl App<'_> {
+  fn reset(&mut self) {
+      self.transition = Transition::MainScreen;
+      self.prev_transition = Transition::MainScreen;
+      self.left_filter_state = ListState::default();
+      self.main_table_state = TableState::default();
+      self.torrents = HashMap::new();
+      self.filtered_torrents = vec![];
+      self.free_space = 0;
+      self.stats = SessionStats::empty();
+      self.groups = TorrentGroupStats::empty();
+      self.selected = None;
+      self.folder_mapping = vec![];
+      self.upload_data = vec![];
+      self.num_active = 0;
+      self.input = "".to_string();
+      self.tree_state = TreeState::default();
+      self.details = None;
+      self.tree_items = vec![];
+      self.err = None;
+  }
 }
 
 impl Default for App<'_> {
@@ -177,10 +194,17 @@ impl Default for App<'_> {
             tree_items: vec![],
             config,
             err: None,
-            sort_func: SortFunction { name: String::from("Date Added"), func: by_date_added }
+            sort_func: SortFunction { name: String::from("Date Added"), func: by_date_added },
+            connection_idx: 0
         }
     }
 }
+/*#[derive(PartialEq)]
+enum ProgramRes {
+    Exit,
+    Reload(usize)
+}*/
+
 fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: App,
@@ -193,10 +217,14 @@ fn run_app<B: Backend>(
         match rx.blocking_recv() {
             Some(TorrentUpdate::UiTick) => {}
             Some(TorrentUpdate::Err { msg, details }) => {
-                app.err = Some((msg, details));
+                if app.err.is_none() {
+                    // keep first error, may be bad in general, but should do for now
+                   app.err = Some((msg, details));
+                }
             }
             Some(TorrentUpdate::Input(event)) => match event.code {
                 KeyCode::Char('q') => {
+                    //let _ = sender.blocking_send(TorrentCmd::PoisonPill);
                     break Ok(());
                 }
                 _ => {
@@ -211,6 +239,9 @@ fn run_app<B: Backend>(
                                 KeyCode::F(1) => {
                                     app.prev_transition = app.transition;
                                     app.transition = Transition::Help;
+                                }
+                                KeyCode::Char('c') => {
+                                    app.transition = Transition::Connection;
                                 }
                                 KeyCode::Down | KeyCode::Char('j') => {
                                     if let Some(selected) = app.main_table_state.selected() {
@@ -726,6 +757,24 @@ fn run_app<B: Backend>(
                                 app.transition = Transition::MainScreen;
                             }
                             _ => {}
+                        },
+                        Transition::Connection => match event.code {
+                            KeyCode::Esc => { app.transition = Transition::MainScreen; }
+                            KeyCode::Char(x) => {
+                                if x.is_ascii_digit() {
+                                    let x = x as usize - '0' as usize;
+                                    if x > 0 { 
+                                      let x = x - 1;
+                                      if x < app.config.connections.len() {
+                                        app.reset();
+                                        app.connection_idx = x;
+                                        let _ = sender.blocking_send(TorrentCmd::Reconnect(x));
+                                      }
+                                    }
+                                }
+                            }
+                            _ => {}
+
                         }
                     }
                 }
@@ -909,7 +958,7 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
 
     let status = Paragraph::new(Spans::from(vec![
         //Span::styled(format!("W: {}, H: {} ", frame.size().width, frame.size().height), Style::default()),
-        Span::styled(format!("🔨 {}", app.config.connection_name), Style::default()),
+        Span::styled(format!("🔨 {}", app.config.connections[app.connection_idx].name), Style::default()),
         //Span::styled(" | Client Mem: ", Style::default()),
         //Span::styled(format_size(app.memory_usage as i64), Style::default().fg(Color::Yellow)),
         Span::styled(" | Free Space: ", Style::default()),
@@ -1004,7 +1053,7 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 &app.transition,
                 &app.folder_mapping,
                 app.num_active,
-                &app.config,
+                &app.config.connections[app.connection_idx],
             );
             let main_table = render_main_table(&app.left_filter_state, &app.groups, &app.filtered_torrents);
 
@@ -1019,6 +1068,13 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 }
             }
         }
+    }
+    if let Some((msg, details)) = &app.err {
+                let area = centered_rect(36, 40, size);
+                let block = error_dialog(msg, details);
+                frame.render_widget(Clear, area);
+                frame.render_widget(block, area);
+
     }
     match app.transition {
         Transition::Action => {
@@ -1068,7 +1124,7 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 .selected()
                 .and_then(|x| app.filtered_torrents.get(x))
             {
-                move_dialog(frame, &x.name, &app.folder_mapping, &app.config);
+                move_dialog(frame, &x.name, &app.folder_mapping, &app.config.connections[app.connection_idx]);
             }
         }
         Transition::ChooseSortFunc => {
@@ -1077,14 +1133,13 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 frame.render_widget(Clear, area);
                 frame.render_widget(block, area);
         }
-        _ => {}
-    }
-    if let Some((msg, details)) = &app.err {
-                let area = centered_rect(36, 40, size);
-                let block = error_dialog(msg, details);
+        Transition::Connection => {
+                let area = centered_rect(26, 35, size);
+                let block = choose_connection(&app.config);
                 frame.render_widget(Clear, area);
                 frame.render_widget(block, area);
-
+        }
+        _ => {}
     }
 }
 
@@ -1098,9 +1153,9 @@ fn help_dialog<'a>() -> Paragraph<'a> {
         Spans::from(vec![Span::raw("Navigation: 'hjkl' or '← ↑ → ↓'. Apply filters: 'f'. ")]),
         Spans::from(vec![Span::raw("Global search s. Search list forward /, backward ?.")]),
         Spans::from(vec![Span::raw(
-            "Action: 'space'. This screen: 'F1'. Sort 'S'. Details: 'd'. Exit 'q'",
+            "Action: 'space'. This screen: 'F1'. Sort 'S'. Details: 'd'. Select connection 'c'. Exit 'q'",
         )]),
-        Spans::from(vec![Span::raw("Configuration file: ~/.config/transg/config.json")]),
+        Spans::from(vec![Span::raw("Configuration file: ~/.config/transg/transg-tui.json")]),
     ])
     .alignment(Alignment::Center)
     .block(
@@ -1172,10 +1227,6 @@ fn draw_tree(items: Vec<TreeItem>) -> Tree {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (mut processor, rx) = command_processor::CommandProcessor::create();
-
-    let app = App::default();
-    processor.run(app.config.clone(), true);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -1183,6 +1234,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
+    let (mut processor, rx) = command_processor::CommandProcessor::create();
+
+    //let app = App::<'_>{connection_idx: current_connection, ..Default::default()};
+    let app = App::default();
+    processor.run(app.config.clone(), app.connection_idx);
     run_app(&mut terminal, app, rx, processor.get_sender())?;
 
     disable_raw_mode()?;
@@ -1197,7 +1253,7 @@ fn render_filters<'a>(
     transition: &Transition,
     mapping: &[(String, char, usize)],
     num_active: usize,
-    config: &Config,
+    connection: &Connection,
 ) -> List<'a> {
     let filters = Block::default()
         .borders(Borders::ALL)
@@ -1222,7 +1278,7 @@ fn render_filters<'a>(
     let mut folder_items: Vec<_> = folders
         .iter()
         .map(|f| {
-            let name = process_folder(f.0, &config.remote_base_dir);
+            let name = process_folder(f.0, &connection.remote_base_dir);
             if transition == &Transition::Filter {
                 let (_, c, i) = mapping.iter().find(|y| &y.0 == f.0).expect("exist");
                 let (first, second) = utf8_split(&name, *i);
@@ -1442,6 +1498,25 @@ fn choose_sort_dialog<'a>() -> Paragraph<'a> {
     message
 }
 
+fn choose_connection<'a>(config: &Config) -> Paragraph<'a> {
+    let key_style = Style::default()
+                        .add_modifier(Modifier::UNDERLINED)
+                        .fg(Color::LightYellow);
+    let mut lines = vec![
+        Spans::from(vec![Span::raw("")]),
+        Spans::from(vec![Span::styled(" Choose connection:", Style::default())]),
+        Spans::from(vec![Span::raw("")]),
+    ];
+    for (i,x) in config.connections.iter().enumerate() {
+       lines.push(Spans::from(vec![
+            Span::raw(" "), Span::styled((i+1).to_string(), key_style), Span::raw("   "), Span::raw(x.name.clone())]),
+       );
+    }
+    let message = Paragraph::new(lines)
+    .block(Block::default().title("Connections").borders(Borders::ALL).border_style(Style::default()));
+    message
+}
+
 fn delete_confirmation_dialog(with_data: bool, name: &str) -> Paragraph {
     let block = Block::default().title("Confirm").borders(Borders::ALL);
     let message = Paragraph::new(Spans::from(vec![
@@ -1460,7 +1535,7 @@ fn delete_confirmation_dialog(with_data: bool, name: &str) -> Paragraph {
     message
 }
 
-fn move_dialog<B: Backend>(frame: &mut Frame<B>, name: &str, folders: &[(String, char, usize)], config: &Config) {
+fn move_dialog<B: Backend>(frame: &mut Frame<B>, name: &str, folders: &[(String, char, usize)], connection: &Connection) {
     let size = frame.size();
     let title = Paragraph::new(Spans::from(vec![Span::styled(name, Style::default().fg(Color::Gray))]))
         .wrap(Wrap { trim: false });
@@ -1468,7 +1543,7 @@ fn move_dialog<B: Backend>(frame: &mut Frame<B>, name: &str, folders: &[(String,
     let items: Vec<_> = folders
         .iter()
         .map(|x| {
-            let name = process_folder(&x.0, &config.remote_base_dir);
+            let name = process_folder(&x.0, &connection.remote_base_dir);
             let (first, second) = utf8_split(&name, x.2);
             let second: String = second.chars().skip(1).collect();
 

@@ -13,7 +13,7 @@ jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
@@ -38,4 +38,5 @@ jobs:
       if: ${{ github.event_name == 'push' }}
       with:
         name: transg-tui-${{ runner.os }}
-        path: target/release/transgression-tui 
+        path: target/release/transgression-tui*
+        retention-days: 5

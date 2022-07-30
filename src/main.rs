@@ -1016,7 +1016,9 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
     match app.transition {
         Transition::Help => {
             let help = help_dialog();
-            frame.render_widget(help, chunks[1]);
+            let width = if size.width > 120 { 30 } else { 60 };
+            let area = centered_rect(width, 90, chunks[1]);
+            frame.render_widget(help, area);
         }
         Transition::Files => {
             let pets_chunks = Layout::default()
@@ -1080,10 +1082,10 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
         Transition::Action => {
             let block = Block::default().title("Actions").borders(Borders::ALL);
             let area_width = if size.width > 120 { 16 } else { 38 };
-            let area = centered_rect(area_width, 38, size);
+            let area = centered_rect(area_width, 42, size);
             let vert_layout = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(2), Constraint::Length(15)].as_ref())
+                .constraints([Constraint::Length(3), Constraint::Length(15)].as_ref())
                 .split(block.inner(area));
             let list = action_menu(&app.config.actions);
             frame.render_widget(Clear, area);
@@ -1093,15 +1095,15 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 || "".to_string(),
                 |x| {
                     if x.name.len() > 25 {
-                        x.name.chars().take(25).collect::<String>() + "…"
+                        "\n ".to_owned() + &x.name.chars().take(25).collect::<String>() + "…"
                     } else {
-                        x.name.clone()
+                        "\n ".to_owned() + &x.name
                     }
                 },
             );
             let status = Paragraph::new(title)
                 .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
-                .wrap(Wrap { trim: true });
+                .wrap(Wrap { trim: false });
 
             frame.render_widget(status, vert_layout[0]);
             frame.render_widget(list, vert_layout[1]);
@@ -1144,29 +1146,39 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
 }
 
 fn help_dialog<'a>() -> Paragraph<'a> {
-    let home = Paragraph::new(vec![
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let gray = Style::default().fg(Color::Gray);
+    Paragraph::new(vec![
         Spans::from(vec![Span::raw("")]),
         Spans::from(vec![Span::styled(
             "Transgression TUI",
             Style::default().fg(Color::LightBlue),
         )]),
-        Spans::from(vec![Span::raw("Navigation: 'hjkl' or '← ↑ → ↓'. Apply filters: 'f'. ")]),
-        Spans::from(vec![Span::raw("Global search s. Search list forward /, backward ?.")]),
-        Spans::from(vec![Span::raw(
-            "Action: 'space'. This screen: 'F1'. Sort 'S'. Details: 'd'. Select connection 'c'. Exit 'q'",
-        )]),
+        Spans::from(""),
+        Spans::from(vec![Span::styled("↑ / k    ", bold), Span::styled("Prev item", gray)]),
+        Spans::from(vec![Span::styled("↓ / j    ", bold), Span::styled("Next item", gray)]),
+        Spans::from(vec![Span::styled("f        ", bold), Span::styled("Filter menu", gray)]),
+        Spans::from(vec![Span::styled("S        ", bold), Span::styled("Sort menu", gray)]), 
+        Spans::from(vec![Span::styled("space    ", bold), Span::styled("Action menu", gray)]), 
+        Spans::from(vec![Span::styled("/        ", bold), Span::styled("Find next item in list", gray)]),
+        Spans::from(vec![Span::styled("?        ", bold), Span::styled("Find prev item in list", gray)]),
+        Spans::from(vec![Span::styled("s        ", bold), Span::styled("Search across all torrents", gray)]),
+        Spans::from(vec![Span::styled("c        ", bold), Span::styled("Connection menu", gray)]), 
+        Spans::from(vec![Span::styled("F1       ", bold), Span::styled("Help screen", gray)]),  
+        Spans::from(vec![Span::styled("Esc      ", bold), Span::styled("Exit from all menus", gray)]),
+        Spans::from(vec![Span::styled("q        ", bold), Span::styled("Quit", gray)]),
+        Spans::from(""),
         Spans::from(vec![Span::raw("Configuration file: ~/.config/transg/transg-tui.json")]),
     ])
-    .alignment(Alignment::Center)
-    .block(
+//    .alignment(Alignment::Center)
+   /* .block(
         Block::default()
             .borders(Borders::ALL)
             .style(Style::default().fg(Color::White))
             .title("Help")
             .border_type(BorderType::Plain),
-    );
+    );*/
 
-    home
 }
 fn render_details(details: &TorrentDetails) -> Table {
     let key_style = Style::default().fg(Color::LightBlue);
@@ -1284,6 +1296,7 @@ fn render_filters<'a>(
                 let (first, second) = utf8_split(&name, *i);
                 let second: String = second.chars().skip(1).collect();
                 ListItem::new(Spans::from(vec![
+                    Span::raw(" "),
                     Span::styled(first, Style::default()),
                     Span::styled(
                         c.to_string(),
@@ -1295,7 +1308,7 @@ fn render_filters<'a>(
                 ]))
             } else {
                 ListItem::new(Spans::from(vec![Span::styled(
-                    format!("{}: {}", name, f.1),
+                    format!(" {}: {}", name, f.1),
                     Style::default(),
                 )]))
             }
@@ -1310,6 +1323,7 @@ fn render_filters<'a>(
                 let second: String = second.chars().skip(1).collect();
 
                 ListItem::new(Spans::from(vec![
+                    Span::raw(" "),
                     Span::styled(first, Style::default()),
                     Span::styled(
                         x.1.to_string(),
@@ -1320,7 +1334,7 @@ fn render_filters<'a>(
                     Span::styled(second, Style::default()),
                 ]))
             } else {
-                ListItem::new(Spans::from(vec![Span::styled(x.0.clone(), Style::default())]))
+                ListItem::new(Spans::from(vec![Span::raw(" "), Span::styled(x.0.clone(), Style::default())]))
             }
         })
         .collect();
@@ -1452,6 +1466,8 @@ fn action_menu(actions: &[Action]) -> List {
                "    ".to_owned() + x.1
             };
             ListItem::new(Spans::from(vec![
+                if x.0.is_empty() { Span::raw("─") } else { Span::raw(" ") },
+                
                 Span::styled(
                     x.0,
                     Style::default()

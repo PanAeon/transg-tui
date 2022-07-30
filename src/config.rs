@@ -27,26 +27,12 @@ pub struct Connection {
     pub remote_base_dir: String,
     pub local_base_dir: String,
 }
-// hmm, now it's public mutable.
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     pub connections: Vec<Connection>,
     pub refresh_interval: u16,
     pub actions: Vec<Action>,
-}
-
-impl Config {
-  /*  #![allow(dead_code)]
-    pub fn get_directories(&self) -> Vec<DirMapping> {
-        self.directories
-            .iter()
-            .map(|x| DirMapping {
-                label: x.to_string(),
-                remote_path: format!("{}/{}", self.remote_base_dir, x),
-                local_path: format!("{}/{}", self.local_base_dir, x),
-            })
-            .collect()
-    }*/
 }
 
 fn empty_config() -> Config {
@@ -55,10 +41,9 @@ fn empty_config() -> Config {
         name: String::from("localhost"),
         username: String::from(""),
         password: String::from(""),
-        url: String::from(""),
+        url: String::from("http://127.0.0.1:9091/transmission/rpc"),
         remote_base_dir: "".to_string(),
         local_base_dir: "".to_string(),
-
         }],
         refresh_interval: 1200,
         actions: vec![]

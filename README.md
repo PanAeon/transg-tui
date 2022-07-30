@@ -1,8 +1,10 @@
+
 # Transgression TUI
 
 Transmission remote TUI client.
 
 [![asciicast](https://asciinema.org/a/511535.svg)](https://asciinema.org/a/511535)
+[![Rust](https://github.com/PanAeon/transg-tui/actions/workflows/rust.yml/badge.svg?branch=master)](https://github.com/PanAeon/transg-tui/actions/workflows/rust.yml)
 
 
 ## Building
@@ -15,7 +17,6 @@ Dependencies:
 ```bash
 cargo build --release
 ```
-Note: I've tested it only on __Linux__  so far.
 
 ### NIX
 ```bash
@@ -25,6 +26,7 @@ or
 ```bash
 nix run github:PanAeon/transg-tui
 ```
+alternatively you can grab latest build from [Github Actions](https://github.com/PanAeon/transg-tui/actions)
 
 
 ## Configuration
@@ -68,16 +70,21 @@ Substitutions:
 
 ## Keybindings
 
-`Transg` tries to be both compatible with VIM, but also utilize easy to remember mnemonics when possible:
-* `hjkl` or `cursor keys`  - navigation
-* `F1`                     - Help screen
-*  `f`                     - Filter menu
-* `S`                      - Sort menu
-* `space`                  - action menu
-* `/` and `?`              - find in list ff/rw
-* `s`                      - Search all torrents
-* `c`                      - connection menu
-* `q`                      - Quit
+| Key       | Description                   |
+| :-------: | :---------------------------: |
+| `↑ / k`   | Prev item                     | 
+| `↓ / j`   | Next item                     |
+| `f`       | Filter menu                   |
+| `S`       | Sort menu                     |
+| `space`   | Action menu                   |
+| `/`       | Find next item in list        |
+| `?`       | Find prev item in list        |
+| `s`       | Search across all torrents    |
+| `c`       | Connection menu               |
+| `F1`      | Help screen                   |
+| `Esc`     | Exit from all menus           |
+| `q`       | Quit                          |
+
 
 ## Betterships
 * Low memory usage even with thousands of torrents
@@ -85,12 +92,10 @@ Substitutions:
 * Organize your torrents with folders
 * Run custom external commands
 
-## Similar apps:
+## Similar apps
 * `transmission-remote`
 * `Fragments`
-* `transmission-qt` 
-* `transmission-gtk` 
 * `transmission-remote-gtk`
-* `transgui` (very lightweight, but uses outdated gtk2 looks)
-* `tremc` (really good, except doesn't filter by directories)
+* `transgui`
+* `tremc`
 

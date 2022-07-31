@@ -126,7 +126,7 @@ pub struct RpcResponse<T> {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct FreeSpace {
-    pub path: String,
+    pub path: Option<String>,
     #[serde(rename = "size-bytes")]
     pub size_bytes: u64,
     //    pub total_size: u64

@@ -31,34 +31,37 @@ alternatively you can grab latest build from [Github Actions](https://github.com
 
 ## Configuration
 
-JSON configuration file is located at `~/.config/transg/transg-tui.json`
+[TOML](https://toml.io) configuration file is located at `~/.config/transg/transg-tui.toml`
+**Note:** old `transg-tui.json` is deprecated and will be converted to the new format on app start. sorry for the hassle
 
 Example config:
-```json
-{
-  "connections": [{
-      "name": "localhost",
-      "url": "http://127.0.0.1:9091/transmission/rpc",
-      "username": "",
-      "password": "",
-      "remote_base_dir": "/var/lib/transmission/torrents",
-      "local_base_dir": "/var/mount/torrents"
-  }],
-  "refresh_interval": 1200,
-  "actions": [{
-    "description": "open in nautilus",
-    "shortcut": "o",
-    "cmd": "swaymsg",
-    "args": ["exec", "--", "nautilus", "\"{location}\""]
-  },
-  {
-    "description": "terminal",
-    "shortcut": "t",
-    "cmd": "swaymsg",
-    "args": ["exec", "--", "alacritty", "--working-directory", "\"{location}\""]
-  }],
-}
+```toml
+refresh_interval = 1200
+# one of: "upload" "donwload" "none"
+traffic-monitor = "upload"
+
+[[connections]]
+name = "NAS"
+username = ""
+password = ""
+url = "http://192.168.1.18:9091/transmission/rpc"
+remote-base-dir = "/var/lib/transmission/downloads"
+local-base-dir = "/run/mount/transmission"
+
+
+[[actions]]
+description = "open in nautilus"
+shortcut = "o"
+cmd = "swaymsg"
+args = ["exec", "--", "nautilus", "\"{location}\""]
+
+[[actions]]
+description = "terminal"
+shortcut = "t"
+cmd = "swaymsg"
+args = ["exec", "--", "alacritty", "--working-directory", "\"{location}\""]
 ```
+
 Substitutions:
 
 |  Token            | Description                                                          |
@@ -70,20 +73,21 @@ Substitutions:
 
 ## Keybindings
 
-| Key       | Description                   |
-| :-------: | :---------------------------: |
-| `↑ / k`   | Prev item                     | 
-| `↓ / j`   | Next item                     |
-| `f`       | Filter menu                   |
-| `S`       | Sort menu                     |
-| `space`   | Action menu                   |
-| `/`       | Find next item in list        |
-| `?`       | Find prev item in list        |
-| `s`       | Search across all torrents    |
-| `c`       | Connection menu               |
-| `F1`      | Help screen                   |
-| `Esc`     | Exit from all menus           |
-| `q`       | Quit                          |
+| Key       | Description                         |
+| :-------: | :---------------------------:       |
+| `↑ / k`   | Prev item                           |
+| `↓ / j`   | Next item                           |
+| `f`       | Filter menu                         |
+| `S`       | Sort menu                           |
+| `space`   | Action menu                         |
+| `d`       | Details screen (under construction) |
+| `/`       | Find next item in list              |
+| `?`       | Find prev item in list              |
+| `s`       | Search across all torrents          |
+| `c`       | Connection menu                     |
+| `F1`      | Help screen                         |
+| `Esc`     | Exit from all menus                 |
+| `q`       | Quit                                |
 
 
 ## Betterships
@@ -93,9 +97,10 @@ Substitutions:
 * Run custom external commands
 
 ## Similar apps
-* `transmission-remote`
-* `Fragments`
-* `transmission-remote-gtk`
-* `transgui`
-* `tremc`
+* [tremc](https://github.com/tremc/tremc)
+* [stig](https://github.com/rndusr/stig)
+* [Original transmission-remote client](https://github.com/transmission/transmission)
+* [Fragments](https://gitlab.gnome.org/World/Fragments)
+* [transmission-remote-gtk](https://github.com/transmission-remote-gtk/transmission-remote-gtk)
+* [transgui](https://github.com/transmission-remote-gui/transgui)
 

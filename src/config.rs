@@ -14,7 +14,11 @@ pub struct Action {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DirMapping {
     pub label: String,
+    #[serde(alias = "remote_path")]
+    #[serde(rename = "remote-path")]
     pub remote_path: String,
+    #[serde(alias = "local_path")]
+    #[serde(rename = "local-path")]
     pub local_path: String,
 }
 
@@ -24,14 +28,42 @@ pub struct Connection {
     pub username: String,
     pub password: String,
     pub url: String,
+    #[serde(alias = "remote_base_dir")]
+    #[serde(rename = "remote-base-dir")]
     pub remote_base_dir: String,
+    #[serde(alias = "local_base_dir")]
+    #[serde(rename = "local-base-dir")]
     pub local_base_dir: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum TrafficMonitorOptions {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "download")]
+    Download,
+    #[serde(rename = "upload")]
+    Upload
+}
+
+impl Default for TrafficMonitorOptions {
+    fn default() -> Self {
+        TrafficMonitorOptions::Upload
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
-    pub connections: Vec<Connection>,
+    #[serde(alias = "refresh_interval")]
+    #[serde(rename = "refresh-interval")]
     pub refresh_interval: u16,
+
+    #[serde(rename = "traffic-monitor")]
+    #[serde(default)]
+    pub traffic_monitor: TrafficMonitorOptions,
+    pub connections: Vec<Connection>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<Action>,
 }
 
@@ -46,22 +78,37 @@ fn empty_config() -> Config {
         local_base_dir: "".to_string(),
         }],
         refresh_interval: 1200,
-        actions: vec![]
+        actions: vec![],
+        traffic_monitor: TrafficMonitorOptions::Upload
     }
 }
-pub fn get_or_create_config() -> Config {
+pub fn get_or_create_config() -> Result<Config, Box<dyn std::error::Error>> {
     let home = home_dir().expect("can't obtain user home directory");
     let config_dir = home.join(".config").join("transg");
     if !config_dir.exists() {
-        create_dir_all(&config_dir).expect("can't create ~/.config/transg");
+        create_dir_all(&config_dir)?;
     }
-    let config_path = config_dir.join("transg-tui.json");
+    // created a bit of a hussle for meself
+    let config_path = config_dir.join("transg-tui.toml");
+    let config_path_json = config_dir.join("transg-tui.json");
+
     if !config_path.exists() {
-        let cfg = serde_json::to_string(&empty_config()).expect("should serialize");
-        write(&config_path, cfg).unwrap_or_else(|_| panic!("Failed to create {:?}", &config_path));
+       let config = if config_path_json.exists() {
+         let f = File::open(config_path_json)?;
+         let buff = BufReader::new(f);
+         let config: Config = serde_json::from_reader(buff)?;
+         config
+       } else {
+         empty_config()
+       };
+       let toml = toml::to_string(&config).unwrap();
+       write(&config_path, toml)?; //.unwrap_or_else(|_| panic!("Failed to create {:?}", &config_path));
+
+       Ok(config)
+    } else {
+        let bytes = std::fs::read(&config_path)?;//.unwrap_or_else(|_| panic!("Can't open {:?}", &config_path));
+        let config: Config = toml::from_slice(&bytes)?;
+        Ok(config)
     }
-    let f = File::open(config_path).expect("can't open config file");
-    let buff = BufReader::new(f);
-    let config: Config = serde_json::from_reader(buff).expect("can't parse json config");
-    config
+
 }

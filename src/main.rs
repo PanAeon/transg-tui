@@ -6,7 +6,7 @@ mod utils;
 
 use binary_heap_plus::BinaryHeap;
 use command_processor::{TorrentCmd, TorrentUpdate};
-use config::{Config, Action, Connection};
+use config::{Config, Action, Connection, TrafficMonitorOptions};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyCode},
     execute,
@@ -162,8 +162,8 @@ impl App<'_> {
   }
 }
 
-impl Default for App<'_> {
-    fn default() -> Self {
+impl App<'_> {
+    fn new(config: Config) -> Self {
         let left_filter_state = ListState::default();
         let main_table_state = TableState::default();
         let torrents: HashMap<i64, TorrentInfo> = HashMap::new();
@@ -171,7 +171,6 @@ impl Default for App<'_> {
         let free_space: u64 = 0;
         let stats: SessionStats = SessionStats::empty();
         let groups: TorrentGroupStats = TorrentGroupStats::empty();
-        let config = config::get_or_create_config();
 
         App {
             transition: Transition::MainScreen,
@@ -788,7 +787,12 @@ fn run_app<B: Backend>(
                     if app.upload_data.len() > 200 {
                         app.upload_data.pop();
                     }
-                    app.upload_data.insert(0, s.upload_speed);
+                    // TODO: poor, need to use enum here...
+                    if app.config.traffic_monitor == TrafficMonitorOptions::Download {
+                      app.upload_data.insert(0, s.download_speed);
+                    } else {
+                      app.upload_data.insert(0, s.upload_speed);
+                    }
                     app.stats = s;
                 }
                 if let Some(s) = free_space_opt {
@@ -943,12 +947,13 @@ fn move_up_down(app: &mut App, down: bool) {
 fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
     let size = frame.size();
 
+    // FIXME: hide bandwith monitor 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(2)
         .constraints(
             [
-                Constraint::Length(3),
+                Constraint::Length(if app.config.traffic_monitor == TrafficMonitorOptions::None { 0 } else {3}),
                 Constraint::Min(2),
                 Constraint::Length(3),
             ]
@@ -1011,7 +1016,9 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
         )
         .data(&app.upload_data)
         .style(Style::default());
-    frame.render_widget(sparkline, chunks[0]);
+    if app.config.traffic_monitor != TrafficMonitorOptions::None {
+        frame.render_widget(sparkline, chunks[0]);
+    }
 
     match app.transition {
         Transition::Help => {
@@ -1160,6 +1167,7 @@ fn help_dialog<'a>() -> Paragraph<'a> {
         Spans::from(vec![Span::styled("f        ", bold), Span::styled("Filter menu", gray)]),
         Spans::from(vec![Span::styled("S        ", bold), Span::styled("Sort menu", gray)]), 
         Spans::from(vec![Span::styled("space    ", bold), Span::styled("Action menu", gray)]), 
+        Spans::from(vec![Span::styled("d        ", bold), Span::styled("Details screen", gray)]), 
         Spans::from(vec![Span::styled("/        ", bold), Span::styled("Find next item in list", gray)]),
         Spans::from(vec![Span::styled("?        ", bold), Span::styled("Find prev item in list", gray)]),
         Spans::from(vec![Span::styled("s        ", bold), Span::styled("Search across all torrents", gray)]),
@@ -1168,7 +1176,7 @@ fn help_dialog<'a>() -> Paragraph<'a> {
         Spans::from(vec![Span::styled("Esc      ", bold), Span::styled("Exit from all menus", gray)]),
         Spans::from(vec![Span::styled("q        ", bold), Span::styled("Quit", gray)]),
         Spans::from(""),
-        Spans::from(vec![Span::raw("Configuration file: ~/.config/transg/transg-tui.json")]),
+        Spans::from(vec![Span::raw("Configuration file: ~/.config/transg/transg-tui.toml")]),
     ])
 //    .alignment(Alignment::Center)
    /* .block(
@@ -1239,6 +1247,8 @@ fn draw_tree(items: Vec<TreeItem>) -> Tree {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // initialize config early, so if there's any serious error we don't mess with the terminal
+    let config = config::get_or_create_config()?;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -1249,7 +1259,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (mut processor, rx) = command_processor::CommandProcessor::create();
 
     //let app = App::<'_>{connection_idx: current_connection, ..Default::default()};
-    let app = App::default();
+    let app = App::new(config);
     processor.run(app.config.clone(), app.connection_idx);
     run_app(&mut terminal, app, rx, processor.get_sender())?;
 

@@ -14,8 +14,8 @@ use crossterm::{
 };
 use std::{collections::HashMap, io};
 use tokio::sync::mpsc::{Receiver, Sender};
-use torrent_stats::{update_torrent_stats, TorrentGroupStats, DOWNLOADING, SEED_QUEUED, VERIFYING};
-use transmission::{SessionStats, TorrentDetails, TorrentInfo};
+use torrent_stats::{update_torrent_stats, TorrentGroupStats};
+use transmission::{SessionStats, TorrentDetails, TorrentInfo, TorrentStatus};
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -30,13 +30,13 @@ use tui::{
 use tui_tree_widget::{flatten, get_identifier_without_leaf, Tree, TreeItem, TreeState};
 use utils::{
     build_file_tree, format_download_speed, format_eta, format_percent_done, format_size, format_status, format_time,
-    process_folder, utf8_split, DOWN_QUEUED, SEEDING, STOPPED, VERIFY_QUEUED,
+    process_folder, utf8_split,
 };
 
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Filter {
-    ByStatus(i64),
+    ByStatus(TorrentStatus),
     ByDirectory(String),
     Recent,
     Active,
@@ -491,13 +491,13 @@ fn run_app<B: Backend>(
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'P' => {
-                                            app.current_filter = Filter::ByStatus(STOPPED);
+                                            app.current_filter = Filter::ByStatus(TorrentStatus::Paused);
                                             app.transition = Transition::MainScreen;
                                             app.left_filter_state.select(Some(2));
                                             app.filtered_torrents = app
                                                 .torrents
                                                 .values()
-                                                .filter(|x| x.status == STOPPED)
+                                                .filter(|x| x.status == TorrentStatus::Paused)
                                                 .cloned()
                                                 .collect();
                                             (app.sort_func.func)(&mut app.filtered_torrents);
@@ -512,78 +512,78 @@ fn run_app<B: Backend>(
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'G' => {
-                                            app.current_filter = Filter::ByStatus(VERIFY_QUEUED);
+                                            app.current_filter = Filter::ByStatus(TorrentStatus::VerifyQueued);
                                             app.transition = Transition::MainScreen;
                                             app.left_filter_state.select(Some(3));
                                             app.filtered_torrents = app
                                                 .torrents
                                                 .values()
-                                                .filter(|x| x.status == VERIFY_QUEUED)
+                                                .filter(|x| x.status == TorrentStatus::VerifyQueued)
                                                 .cloned()
                                                 .collect();
                                             (app.sort_func.func)(&mut app.filtered_torrents);
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'C' => {
-                                            app.current_filter = Filter::ByStatus(VERIFYING);
+                                            app.current_filter = Filter::ByStatus(TorrentStatus::Verifying);
                                             app.transition = Transition::MainScreen;
                                             app.left_filter_state.select(Some(4));
                                             app.filtered_torrents = app
                                                 .torrents
                                                 .values()
-                                                .filter(|x| x.status == VERIFYING)
+                                                .filter(|x| x.status == TorrentStatus::Verifying)
                                                 .cloned()
                                                 .collect();
                                             (app.sort_func.func)(&mut app.filtered_torrents);
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'Q' => {
-                                            app.current_filter = Filter::ByStatus(DOWN_QUEUED);
+                                            app.current_filter = Filter::ByStatus(TorrentStatus::DownQueued);
                                             app.transition = Transition::MainScreen;
                                             app.left_filter_state.select(Some(5));
                                             app.filtered_torrents = app
                                                 .torrents
                                                 .values()
-                                                .filter(|x| x.status == DOWN_QUEUED)
+                                                .filter(|x| x.status == TorrentStatus::DownQueued)
                                                 .cloned()
                                                 .collect();
                                             (app.sort_func.func)(&mut app.filtered_torrents);
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'D' => {
-                                            app.current_filter = Filter::ByStatus(DOWNLOADING);
+                                            app.current_filter = Filter::ByStatus(TorrentStatus::Downloading);
                                             app.transition = Transition::MainScreen;
                                             app.left_filter_state.select(Some(6));
                                             app.filtered_torrents = app
                                                 .torrents
                                                 .values()
-                                                .filter(|x| x.status == DOWNLOADING)
+                                                .filter(|x| x.status == TorrentStatus::Downloading)
                                                 .cloned()
                                                 .collect();
                                             (app.sort_func.func)(&mut app.filtered_torrents);
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'U' => {
-                                            app.current_filter = Filter::ByStatus(SEED_QUEUED);
+                                            app.current_filter = Filter::ByStatus(TorrentStatus::SeedQueued);
                                             app.transition = Transition::MainScreen;
                                             app.left_filter_state.select(Some(7));
                                             app.filtered_torrents = app
                                                 .torrents
                                                 .values()
-                                                .filter(|x| x.status == SEED_QUEUED)
+                                                .filter(|x| x.status == TorrentStatus::SeedQueued)
                                                 .cloned()
                                                 .collect();
                                             (app.sort_func.func)(&mut app.filtered_torrents);
                                             select_first_torrent(&mut app, sender.clone());
                                         }
                                         'S' => {
-                                            app.current_filter = Filter::ByStatus(SEEDING);
+                                            app.current_filter = Filter::ByStatus(TorrentStatus::Seeding);
                                             app.transition = Transition::MainScreen;
                                             app.left_filter_state.select(Some(8));
                                             app.filtered_torrents = app
                                                 .torrents
                                                 .values()
-                                                .filter(|x| x.status == SEEDING)
+                                                .filter(|x| x.status == TorrentStatus::Seeding)
                                                 .cloned()
                                                 .collect();
                                             (app.sort_func.func)(&mut app.filtered_torrents);
@@ -1371,7 +1371,7 @@ fn render_main_table<'a>(
         .iter()
         .map(|x| {
             Row::new(vec![
-                Cell::from(Span::raw(format_status(x.status, x.error))),
+                Cell::from(Span::raw(format_status(&x.status, x.error))),
                 Cell::from(Span::raw(x.name.clone())),
                 Cell::from(Span::raw(format_percent_done(x.percent_done))),
                 Cell::from(Span::raw(format_eta(x.eta))),

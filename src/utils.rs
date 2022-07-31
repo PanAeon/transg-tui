@@ -4,7 +4,7 @@ use chrono::{NaiveDateTime, DateTime, Utc};
 use tui_tree_widget::TreeItem;
 
 //use std::fmt;
-use crate::transmission;
+use crate::transmission::{self, TorrentStatus};
 //use chrono::{DateTime, NaiveDateTime, Utc};
 
 #[derive(Debug, Clone)]
@@ -26,13 +26,6 @@ const F_BYTES_TB: f64 = 1024.0 * 1024.0 * 1024.0 * 1024.0;
 const F_BYTES_GB: f64 = 1024.0 * 1024.0 * 1024.0;
 const F_BYTES_MB: f64 = 1024.0 * 1024.0;
 
-pub const STOPPED: i64 = 0;
-pub const VERIFY_QUEUED: i64 = 1;
-pub const VERIFYING: i64 = 2;
-pub const DOWN_QUEUED: i64 = 3;
-pub const DOWNLOADING: i64 = 4;
-pub const SEED_QUEUED: i64 = 5;
-pub const SEEDING: i64 = 6;
 
 pub fn process_folder(s: &str, base_dir: &str) -> String {
     if s == base_dir {
@@ -112,20 +105,19 @@ pub fn format_eta(secs: i64) -> String {
     }
 }
 
-pub fn format_status<'a>(x: i64, err: i64) -> &'a str {
+pub fn format_status<'a>(x: &TorrentStatus, err: i64) -> &'a str {
     if err != 0 {
         " ⁈"
 
     } else {
     match x {
-        STOPPED => " ⏸ ",
-        VERIFY_QUEUED => " 🗘",
-        VERIFYING => " 🗘",
-        DOWN_QUEUED => " ⇩",
-        DOWNLOADING => " ⇣",
-        SEED_QUEUED => " ⇧",
-        SEEDING => " ⇡",
-        _ => "",
+        TorrentStatus::Paused => " ⏸ ",
+        TorrentStatus::VerifyQueued => " 🗘",
+        TorrentStatus::Verifying => " 🗘",
+        TorrentStatus::DownQueued => " ⇩",
+        TorrentStatus::Downloading => " ⇣",
+        TorrentStatus::SeedQueued => " ⇧",
+        TorrentStatus::Seeding => " ⇡",
     }
     }
 }

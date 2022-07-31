@@ -1,6 +1,6 @@
 use std::collections::HashMap;
+use crate::transmission::{TorrentInfo, TorrentStatus};
 
-use crate::transmission::TorrentInfo;
 #[derive(Debug)]
 pub struct TorrentGroupStats {
     pub num_total: u64,
@@ -14,6 +14,7 @@ pub struct TorrentGroupStats {
     pub num_error: u64,
     pub folders: HashMap<String, u64>,
 }
+
 impl TorrentGroupStats {
     pub fn empty() -> Self {
         TorrentGroupStats {
@@ -31,18 +32,10 @@ impl TorrentGroupStats {
     }
 }
 
-pub const STOPPED: i64 = 0;
-pub const VERIFY_QUEUED: i64 = 1;
-pub const VERIFYING: i64 = 2;
-pub const DOWN_QUEUED: i64 = 3;
-pub const DOWNLOADING: i64 = 4;
-pub const SEED_QUEUED: i64 = 5;
-pub const SEEDING: i64 = 6;
 
 pub fn update_torrent_stats(torrents: &HashMap<i64, TorrentInfo>) -> TorrentGroupStats {
     let mut group_stats = TorrentGroupStats::empty();
     for x in torrents.values() {
-        let status = x.status;
         let error = x.error;
         if error != 0 {
             group_stats.num_error += 1;
@@ -50,15 +43,14 @@ pub fn update_torrent_stats(torrents: &HashMap<i64, TorrentInfo>) -> TorrentGrou
         let folder = x.download_dir.clone();
         *group_stats.folders.entry(folder).or_insert(0) += 1;
         group_stats.num_total += 1;
-        match status {
-            STOPPED => group_stats.num_stopped += 1,
-            VERIFY_QUEUED => group_stats.num_queue_checking += 1,
-            VERIFYING => group_stats.num_checking += 1,
-            DOWN_QUEUED => group_stats.num_queue_down += 1,
-            DOWNLOADING => group_stats.num_downloading += 1,
-            SEED_QUEUED => group_stats.num_queue_up += 1,
-            SEEDING => group_stats.num_seeding += 1,
-            _ => (),
+        match x.status {
+            TorrentStatus::Paused       => group_stats.num_stopped += 1,
+            TorrentStatus::VerifyQueued => group_stats.num_queue_checking += 1,
+            TorrentStatus::Verifying    => group_stats.num_checking += 1,
+            TorrentStatus::DownQueued   => group_stats.num_queue_down += 1,
+            TorrentStatus::Downloading  => group_stats.num_downloading += 1,
+            TorrentStatus::SeedQueued   => group_stats.num_queue_up += 1,
+            TorrentStatus::Seeding      => group_stats.num_seeding += 1,
         }
     }
 

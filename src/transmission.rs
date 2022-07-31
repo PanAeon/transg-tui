@@ -6,6 +6,7 @@ use serde_json::Value;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::Mutex;
+use serde::de::{self, Visitor};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -40,7 +41,7 @@ impl fmt::Display for HttpError {
 pub struct TorrentInfo {
     pub id: i64,
     pub name: String,
-    pub status: i64,
+    pub status: TorrentStatus,
     pub percent_done: f64,
     pub error: i64,
     pub error_string: String,
@@ -70,7 +71,7 @@ impl TorrentInfo {
         TorrentInfo {
             id: xs[0].as_i64().unwrap(),
             name: xs[1].as_str().unwrap().to_string(),
-            status: xs[2].as_i64().unwrap(),
+            status: xs[2].as_i64().unwrap().try_into().unwrap(),
             percent_done: xs[3].as_f64().unwrap(),
             error: xs[4].as_i64().unwrap(),
             error_string: xs[5].as_str().unwrap().to_string(),
@@ -91,7 +92,7 @@ impl TorrentInfo {
         }
     }
     pub fn update(&mut self, xs: &[Value]) {
-        self.status = xs[2].as_i64().unwrap();
+        self.status = xs[2].as_i64().unwrap().try_into().unwrap();
         self.percent_done = xs[3].as_f64().unwrap();
         self.error = xs[4].as_i64().unwrap();
         self.error_string = xs[5].as_str().unwrap().to_string();
@@ -116,6 +117,65 @@ pub struct TransmissionClient {
     client: reqwest::Client,
     session_id: Mutex<String>,
     url: String,
+}
+
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TorrentStatus {
+   Paused = 0,
+   VerifyQueued = 1,
+   Verifying = 2,
+   DownQueued = 3,
+   Downloading = 4,
+   SeedQueued = 5,
+   Seeding = 6,
+}
+
+
+    struct StatusVisitor;
+
+    impl<'de> Visitor<'de> for StatusVisitor {
+        type Value = TorrentStatus;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("an integer between 0 and 6")
+    }
+
+    fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        TorrentStatus::try_from(value as i64).map_err(|e| E::custom(e)) // TODO: bug here, albeit cosmetic
+    }
+
+
+    fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        TorrentStatus::try_from(value).map_err(|e| E::custom(e))
+    }
+
+    }
+    fn status_deserializer<'de, D>(d: D) -> std::result::Result<TorrentStatus, D::Error> where D: serde::Deserializer<'de> {
+        d.deserialize_u64(StatusVisitor)
+    }
+
+impl TryFrom<i64> for TorrentStatus {
+    type Error = &'static str;
+
+    fn try_from(value: i64) -> std::result::Result<Self, Self::Error> {
+        match value {
+          0 => Ok(Self::Paused),
+          1 => Ok(Self::VerifyQueued),
+          2 => Ok(Self::Verifying),
+          3 => Ok(Self::DownQueued),
+          4 => Ok(Self::Downloading),
+          5 => Ok(Self::SeedQueued),
+          6 => Ok(Self::Seeding),
+          _ => Err("Can't construct TorrentStatus")
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -294,7 +354,8 @@ pub struct TorrentDetails {
     pub seeder_count: i64,
     #[serde(rename = "leecherCount")]
     pub leecher_count: i64,
-    pub status: u64,
+    #[serde(deserialize_with = "status_deserializer")]
+    pub status: TorrentStatus, 
     #[serde(rename = "downloadDir")]
     pub download_dir: String,
     #[serde(rename = "comment")]

@@ -49,7 +49,7 @@ pub enum TrafficMonitorOptions {
     #[serde(rename = "download")]
     Download,
     #[serde(rename = "upload")]
-    Upload
+    Upload,
 }
 
 impl Default for TrafficMonitorOptions {
@@ -76,16 +76,16 @@ pub struct Config {
 fn empty_config() -> Config {
     Config {
         connections: vec![Connection {
-        name: String::from("localhost"),
-        username: String::from(""),
-        password: String::from(""),
-        url: String::from("http://127.0.0.1:9091/transmission/rpc"),
-        download_dir: "".to_string(),
-        local_download_dir: "".to_string(),
+            name: String::from("localhost"),
+            username: String::from(""),
+            password: String::from(""),
+            url: String::from("http://127.0.0.1:9091/transmission/rpc"),
+            download_dir: "".to_string(),
+            local_download_dir: "".to_string(),
         }],
         refresh_interval: 1200,
         actions: vec![],
-        traffic_monitor: TrafficMonitorOptions::Upload
+        traffic_monitor: TrafficMonitorOptions::Upload,
     }
 }
 pub fn get_or_create_config() -> Result<Config, Box<dyn std::error::Error>> {
@@ -99,22 +99,21 @@ pub fn get_or_create_config() -> Result<Config, Box<dyn std::error::Error>> {
     let config_path_json = config_dir.join("transg-tui.json");
 
     if !config_path.exists() {
-       let config = if config_path_json.exists() {
-         let f = File::open(config_path_json)?;
-         let buff = BufReader::new(f);
-         let config: Config = serde_json::from_reader(buff)?;
-         config
-       } else {
-         empty_config()
-       };
-       let toml = toml::to_string(&config).unwrap();
-       write(&config_path, toml)?; //.unwrap_or_else(|_| panic!("Failed to create {:?}", &config_path));
+        let config = if config_path_json.exists() {
+            let f = File::open(config_path_json)?;
+            let buff = BufReader::new(f);
+            let config: Config = serde_json::from_reader(buff)?;
+            config
+        } else {
+            empty_config()
+        };
+        let toml = toml::to_string(&config).unwrap();
+        write(&config_path, toml)?; //.unwrap_or_else(|_| panic!("Failed to create {:?}", &config_path));
 
-       Ok(config)
+        Ok(config)
     } else {
-        let bytes = std::fs::read(&config_path)?;//.unwrap_or_else(|_| panic!("Can't open {:?}", &config_path));
+        let bytes = std::fs::read(&config_path)?; //.unwrap_or_else(|_| panic!("Can't open {:?}", &config_path));
         let config: Config = toml::from_slice(&bytes)?;
         Ok(config)
     }
-
 }

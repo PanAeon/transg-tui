@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::transmission::{TorrentInfo, TorrentStatus};
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct TorrentGroupStats {
@@ -32,7 +32,6 @@ impl TorrentGroupStats {
     }
 }
 
-
 pub fn update_torrent_stats(torrents: &HashMap<i64, TorrentInfo>) -> TorrentGroupStats {
     let mut group_stats = TorrentGroupStats::empty();
     for x in torrents.values() {
@@ -44,16 +43,15 @@ pub fn update_torrent_stats(torrents: &HashMap<i64, TorrentInfo>) -> TorrentGrou
         *group_stats.folders.entry(folder).or_insert(0) += 1;
         group_stats.num_total += 1;
         match x.status {
-            TorrentStatus::Paused       => group_stats.num_stopped += 1,
+            TorrentStatus::Paused => group_stats.num_stopped += 1,
             TorrentStatus::VerifyQueued => group_stats.num_queue_checking += 1,
-            TorrentStatus::Verifying    => group_stats.num_checking += 1,
-            TorrentStatus::DownQueued   => group_stats.num_queue_down += 1,
-            TorrentStatus::Downloading  => group_stats.num_downloading += 1,
-            TorrentStatus::SeedQueued   => group_stats.num_queue_up += 1,
-            TorrentStatus::Seeding      => group_stats.num_seeding += 1,
+            TorrentStatus::Verifying => group_stats.num_checking += 1,
+            TorrentStatus::DownQueued => group_stats.num_queue_down += 1,
+            TorrentStatus::Downloading => group_stats.num_downloading += 1,
+            TorrentStatus::SeedQueued => group_stats.num_queue_up += 1,
+            TorrentStatus::Seeding => group_stats.num_seeding += 1,
         }
     }
-
 
     group_stats
     /*

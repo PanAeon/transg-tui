@@ -1,5 +1,5 @@
 use crate::config::{Config, Connection};
-use crate::transmission::{FreeSpace, Result, SessionStats, TorrentAdd, TorrentDetails, TransmissionClient, Session};
+use crate::transmission::{FreeSpace, Result, Session, SessionStats, TorrentAdd, TorrentDetails, TransmissionClient};
 use crate::utils::build_tree;
 use crossterm::event::{self, KeyEvent};
 use lazy_static::lazy_static;
@@ -28,7 +28,7 @@ pub enum TorrentUpdate {
         msg: String,
         details: String,
     },
-    Session(Session)
+    Session(Session),
 }
 
 #[derive(Debug)]
@@ -51,7 +51,7 @@ pub enum TorrentCmd {
     Move(Vec<i64>, String, bool),
     AddTorrent(Option<String>, Option<String>, Option<String>, bool), // download dir, filename, metainfo, start_paused
     //PoisonPill,
-    Reconnect(usize)
+    Reconnect(usize),
 }
 
 lazy_static! {
@@ -126,7 +126,7 @@ impl CommandProcessor {
                         .unwrap_or_else(|| Duration::from_secs(0));
 
                     if sender.is_closed() || update_sender2.is_closed() {
-                            break;
+                        break;
                     }
 
                     if event::poll(timeout).expect("poll works") {
@@ -144,7 +144,7 @@ impl CommandProcessor {
                         last_tick_cmd = Instant::now();
                         if sender.send(TorrentCmd::Tick(i)).await.is_ok() {
                             i += 1;
-                        } 
+                        }
                     }
                 }
             });
@@ -166,7 +166,7 @@ impl CommandProcessor {
                         &mut details_id,
                         &mut client,
                         &config,
-                        &mut connection
+                        &mut connection,
                     )
                     .await;
                     if let Err(error) = result {
@@ -183,50 +183,45 @@ impl CommandProcessor {
     }
 }
 
-async fn send_full_update(
-    client: &TransmissionClient,
-    update_sender: &mpsc::Sender<TorrentUpdate>,
-    ) -> Result<()> {
-                    let res = client.get_all_torrents(&TORRENT_INFO_FIELDS).await;
-                    if let Err(error) = res {
-                        let _ = update_sender
-                            .send(TorrentUpdate::Err {
-                                msg: "Can't connect to transmission!".to_string(),
-                                details: format!("Please, check connection string and restart the app:\n\n{}",  error),
-                            })
-                            .await;
-                    } else {
-                        let response = res.unwrap();
-                        let ts = response.get("arguments").unwrap().get("torrents").unwrap().to_owned();
-                        let _ = update_sender.send(TorrentUpdate::Full(ts)).await;
-                    }
+async fn send_full_update(client: &TransmissionClient, update_sender: &mpsc::Sender<TorrentUpdate>) -> Result<()> {
+    let res = client.get_all_torrents(&TORRENT_INFO_FIELDS).await;
+    if let Err(error) = res {
+        let _ = update_sender
+            .send(TorrentUpdate::Err {
+                msg: "Can't connect to transmission!".to_string(),
+                details: format!("Please, check connection string and restart the app:\n\n{}", error),
+            })
+            .await;
+    } else {
+        let response = res.unwrap();
+        let ts = response.get("arguments").unwrap().get("torrents").unwrap().to_owned();
+        let _ = update_sender.send(TorrentUpdate::Full(ts)).await;
+    }
     Ok(())
-
 }
 
 // a bit tricky config synchronization.., still better then Rc<Mutex>..
 async fn update_session(
     client: &TransmissionClient,
     update_sender: &mpsc::Sender<TorrentUpdate>,
-    connection: &mut Connection
-    ) -> Result<()> {
-                    let res = client.get_session().await;
-                    if let Err(error) = res {
-                        let _ = update_sender
-                            .send(TorrentUpdate::Err {
-                                msg: "Can't connect to transmission!".to_string(),
-                                details: format!("Please, check connection string and restart the app:\n\n{}",  error),
-                            })
-                            .await;
-                    } else {
-                        let response = res.unwrap();
-                        if connection.download_dir.is_empty() {
-                            connection.download_dir = response.arguments.download_dir.clone();
-                        } 
-                        let _ = update_sender.send(TorrentUpdate::Session(response.arguments)).await;
-                    }
+    connection: &mut Connection,
+) -> Result<()> {
+    let res = client.get_session().await;
+    if let Err(error) = res {
+        let _ = update_sender
+            .send(TorrentUpdate::Err {
+                msg: "Can't connect to transmission!".to_string(),
+                details: format!("Please, check connection string and restart the app:\n\n{}", error),
+            })
+            .await;
+    } else {
+        let response = res.unwrap();
+        if connection.download_dir.is_empty() {
+            connection.download_dir = response.arguments.download_dir.clone();
+        }
+        let _ = update_sender.send(TorrentUpdate::Session(response.arguments)).await;
+    }
     Ok(())
-
 }
 
 async fn update_step(
@@ -235,7 +230,7 @@ async fn update_step(
     details_id: &mut Option<i64>,
     client: &mut TransmissionClient,
     config: &Config,
-    connection: &mut Connection
+    connection: &mut Connection,
 ) -> Result<()> {
     let cmd = receiver.recv().await.expect("hmm, need to handle this error");
 
@@ -249,7 +244,6 @@ async fn update_step(
             let _ = update_session(client, update_sender, connection).await;
             let _ = send_full_update(client, update_sender).await;
             *details_id = None;
-
         }
         TorrentCmd::GetDetails(id) => {
             *details_id = Some(id);
@@ -274,7 +268,7 @@ async fn update_step(
                 // mask an error if for some reason transmission doesn't want to return free space
                 let res = client.get_free_space(&connection.download_dir).await;
                 if let Ok(free_space) = res {
-                   Some(free_space.arguments)
+                    Some(free_space.arguments)
                 } else {
                     None
                 }
@@ -309,8 +303,10 @@ async fn update_step(
             let details = client.get_torrent_details(vec![id]).await?; // TODO: what if id is wrong?
             if !details.arguments.torrents.is_empty() {
                 let torrent = &details.arguments.torrents[0];
-                let location = if !connection.local_download_dir.is_empty() { 
-                    torrent.download_dir.replace(&connection.download_dir, &connection.local_download_dir)
+                let location = if !connection.local_download_dir.is_empty() {
+                    torrent
+                        .download_dir
+                        .replace(&connection.download_dir, &connection.local_download_dir)
                 } else {
                     torrent.download_dir.clone()
                 };
@@ -325,14 +321,15 @@ async fn update_step(
                 let action = config.actions.get(idx).expect("Wrong action index!");
                 let mut cmd_builder = std::process::Command::new(action.cmd.clone());
                 for a in &action.args {
-                    let arg = a.replace("{location}", &l)
-                               .replace("{id}", &torrent.id.to_string())
-                               .replace("{hash}", &torrent.hash_string)
-                               .replace("{download_dir}", &torrent.download_dir)
-                               .replace("{name}", &torrent.name);
+                    let arg = a
+                        .replace("{location}", &l)
+                        .replace("{id}", &torrent.id.to_string())
+                        .replace("{hash}", &torrent.hash_string)
+                        .replace("{download_dir}", &torrent.download_dir)
+                        .replace("{name}", &torrent.name);
                     cmd_builder.arg(&arg);
                 }
-                cmd_builder.spawn()?; // TODO: differentiate between different kind of errors 
+                cmd_builder.spawn()?; // TODO: differentiate between different kind of errors
             }
         }
         TorrentCmd::QueueMoveUp(ids) => {
@@ -394,7 +391,6 @@ async fn update_step(
                 .unwrap()
                 .to_string();
         }
-
     };
     Ok(())
 }

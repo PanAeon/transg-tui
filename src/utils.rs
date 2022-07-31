@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::{NaiveDateTime, DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use tui_tree_widget::TreeItem;
 
 //use std::fmt;
@@ -26,21 +26,20 @@ const F_BYTES_TB: f64 = 1024.0 * 1024.0 * 1024.0 * 1024.0;
 const F_BYTES_GB: f64 = 1024.0 * 1024.0 * 1024.0;
 const F_BYTES_MB: f64 = 1024.0 * 1024.0;
 
-
 pub fn process_folder(s: &str, base_dir: &str) -> String {
     if s == base_dir {
         s.split('/').last().unwrap_or("<root>").to_string()
     } else {
-    let mut s = s.replace(base_dir, ""); // TODO: special case, when base_dir is '/'
-    if s.starts_with('/') {
-        s = s.strip_prefix('/').expect("prefix").to_string();
-    }
-    let parts: Vec<&str> = s.split('/').collect();
-    if parts.len() > 1 {
-        format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1])
-    } else {
-        s.to_string()
-    }
+        let mut s = s.replace(base_dir, ""); // TODO: special case, when base_dir is '/'
+        if s.starts_with('/') {
+            s = s.strip_prefix('/').expect("prefix").to_string();
+        }
+        let parts: Vec<&str> = s.split('/').collect();
+        if parts.len() > 1 {
+            format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1])
+        } else {
+            s.to_string()
+        }
     }
 }
 
@@ -109,20 +108,18 @@ pub fn format_eta(secs: i64) -> String {
 pub fn format_status<'a>(x: &TorrentStatus, err: i64) -> &'a str {
     if err != 0 {
         " ⁈"
-
     } else {
-    match x {
-        TorrentStatus::Paused => " ⏸ ",
-        TorrentStatus::VerifyQueued => " 🗘",
-        TorrentStatus::Verifying => " 🗘",
-        TorrentStatus::DownQueued => " ⇩",
-        TorrentStatus::Downloading => " ⇣",
-        TorrentStatus::SeedQueued => " ⇧",
-        TorrentStatus::Seeding => " ⇡",
-    }
+        match x {
+            TorrentStatus::Paused => " ⏸ ",
+            TorrentStatus::VerifyQueued => " 🗘",
+            TorrentStatus::Verifying => " 🗘",
+            TorrentStatus::DownQueued => " ⇩",
+            TorrentStatus::Downloading => " ⇣",
+            TorrentStatus::SeedQueued => " ⇧",
+            TorrentStatus::Seeding => " ⇡",
+        }
     }
 }
-
 
 #[allow(dead_code)]
 pub fn utf8_truncate(input: &mut String, maxsize: usize) {
@@ -203,14 +200,14 @@ pub fn build_tree(files: &[transmission::File]) -> Vec<Node> {
     xs.sort_by(|a, b| a.2[0].partial_cmp(&b.2[0]).unwrap());
     do_build_tree("", 0, xs)
 }
-pub fn do_build_file_tree<'a>(level: usize, xs: Vec<(u64, u64, Vec<u64>)>, strings: &HashMap<u64, &str>) -> Vec<TreeItem<'a>> {
+pub fn do_build_file_tree<'a>(
+    level: usize,
+    xs: Vec<(u64, u64, Vec<u64>)>,
+    strings: &HashMap<u64, &str>,
+) -> Vec<TreeItem<'a>> {
     let mut ns: Vec<TreeItem> = vec![];
 
-    let mut parents: Vec<u64> = xs
-        .iter()
-        .filter(|x| x.2.len() > level)
-        .map(|x| x.2[level])
-        .collect();
+    let mut parents: Vec<u64> = xs.iter().filter(|x| x.2.len() > level).map(|x| x.2[level]).collect();
     parents.sort();
     parents.dedup();
 
@@ -228,11 +225,15 @@ pub fn do_build_file_tree<'a>(level: usize, xs: Vec<(u64, u64, Vec<u64>)>, strin
             vec![]
         };
         ns.push(TreeItem::new(
-            format!("{} - {}", strings.get(&name).expect("should be name"), crate::utils::format_size(size as i64))
-         //   path,
-          //  size,
-          //  downloaded,
-        , cs));
+            format!(
+                "{} - {}",
+                strings.get(&name).expect("should be name"),
+                crate::utils::format_size(size as i64)
+            ), //   path,
+               //  size,
+               //  downloaded,
+            cs,
+        ));
     }
     ns
 }
@@ -245,20 +246,22 @@ pub fn build_file_tree<'a>(files: &[transmission::File]) -> Vec<TreeItem<'a>> {
             (
                 f.length,
                 f.bytes_completed,
-                f.name.split('/').map(|s| {
-                    if let Some(id) = strings.get(s) {
-                        *id
-                    } else {
-                        id += 1;
-                        strings.insert(s, id);
-                        id
-                    }
-
-                }).collect(),
+                f.name
+                    .split('/')
+                    .map(|s| {
+                        if let Some(id) = strings.get(s) {
+                            *id
+                        } else {
+                            id += 1;
+                            strings.insert(s, id);
+                            id
+                        }
+                    })
+                    .collect(),
             )
         })
         .collect();
     xs.sort_by(|a, b| a.2[0].partial_cmp(&b.2[0]).unwrap());
-    let strings : HashMap<u64, &str> = strings.iter().map(|x| (*x.1, *x.0)).collect();
+    let strings: HashMap<u64, &str> = strings.iter().map(|x| (*x.1, *x.0)).collect();
     do_build_file_tree(0, xs, &strings)
 }

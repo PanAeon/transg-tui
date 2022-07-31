@@ -1,28 +1,27 @@
-use serde::de::DeserializeOwned;
 use reqwest::header;
+use serde::de::DeserializeOwned;
 use serde_json::json;
 use serde_json::Value;
 //use std::cell::RefCell;
+use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::Mutex;
-use serde::de::{self, Visitor};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[derive(Debug, Clone)]
 struct HttpError {
-    description: String
+    description: String,
 }
 
 impl HttpError {
     pub fn new(s: &str) -> Self {
         HttpError {
-            description: String::from(s)
+            description: String::from(s),
         }
-    } 
+    }
 }
-
 
 impl std::error::Error for HttpError {
     fn description(&self) -> &str {
@@ -35,7 +34,6 @@ impl fmt::Display for HttpError {
         write!(f, "Http Error: {}", self.description)
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct TorrentInfo {
@@ -119,23 +117,21 @@ pub struct TransmissionClient {
     url: String,
 }
 
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum TorrentStatus {
-   Paused = 0,
-   VerifyQueued = 1,
-   Verifying = 2,
-   DownQueued = 3,
-   Downloading = 4,
-   SeedQueued = 5,
-   Seeding = 6,
+    Paused = 0,
+    VerifyQueued = 1,
+    Verifying = 2,
+    DownQueued = 3,
+    Downloading = 4,
+    SeedQueued = 5,
+    Seeding = 6,
 }
 
+struct StatusVisitor;
 
-    struct StatusVisitor;
-
-    impl<'de> Visitor<'de> for StatusVisitor {
-        type Value = TorrentStatus;
+impl<'de> Visitor<'de> for StatusVisitor {
+    type Value = TorrentStatus;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("an integer between 0 and 6")
@@ -148,32 +144,33 @@ pub enum TorrentStatus {
         TorrentStatus::try_from(value as i64).map_err(|e| E::custom(e)) // TODO: bug here, albeit cosmetic
     }
 
-
     fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E>
     where
         E: de::Error,
     {
         TorrentStatus::try_from(value).map_err(|e| E::custom(e))
     }
-
-    }
-    fn status_deserializer<'de, D>(d: D) -> std::result::Result<TorrentStatus, D::Error> where D: serde::Deserializer<'de> {
-        d.deserialize_u64(StatusVisitor)
-    }
+}
+fn status_deserializer<'de, D>(d: D) -> std::result::Result<TorrentStatus, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    d.deserialize_u64(StatusVisitor)
+}
 
 impl TryFrom<i64> for TorrentStatus {
     type Error = &'static str;
 
     fn try_from(value: i64) -> std::result::Result<Self, Self::Error> {
         match value {
-          0 => Ok(Self::Paused),
-          1 => Ok(Self::VerifyQueued),
-          2 => Ok(Self::Verifying),
-          3 => Ok(Self::DownQueued),
-          4 => Ok(Self::Downloading),
-          5 => Ok(Self::SeedQueued),
-          6 => Ok(Self::Seeding),
-          _ => Err("Can't construct TorrentStatus")
+            0 => Ok(Self::Paused),
+            1 => Ok(Self::VerifyQueued),
+            2 => Ok(Self::Verifying),
+            3 => Ok(Self::DownQueued),
+            4 => Ok(Self::Downloading),
+            5 => Ok(Self::SeedQueued),
+            6 => Ok(Self::Seeding),
+            _ => Err("Can't construct TorrentStatus"),
         }
     }
 }
@@ -217,7 +214,6 @@ impl Stats {
         }
     }
 }
-
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Session {
@@ -363,7 +359,7 @@ pub struct TorrentDetails {
     #[serde(rename = "leecherCount")]
     pub leecher_count: i64,
     #[serde(deserialize_with = "status_deserializer")]
-    pub status: TorrentStatus, 
+    pub status: TorrentStatus,
     #[serde(rename = "downloadDir")]
     pub download_dir: String,
     #[serde(rename = "comment")]
@@ -446,24 +442,19 @@ pub struct TorrentAdd {
     pub priority_normal: Option<Vec<i64>>,
 }
 
-static APP_USER_AGENT: &str = concat!(
-    env!("CARGO_PKG_NAME"),
-    "/",
-    env!("CARGO_PKG_VERSION"),
-);
+static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
 // FIXME: how to work with http errors? async errors?
 // від заумі інтелігентськой, митця пожалуста спасі, щоб естетичний код продукту розшифрувать могли
 // усі
 impl TransmissionClient {
     pub fn new(url: &str, username: &str, password: &str) -> TransmissionClient {
-        let b = reqwest::Client::builder()
-            .user_agent(APP_USER_AGENT);
+        let b = reqwest::Client::builder().user_agent(APP_USER_AGENT);
 
         let mut headers = header::HeaderMap::new();
 
         if !username.is_empty() {
-            let p = username.to_owned() + ":" + password; 
+            let p = username.to_owned() + ":" + password;
 
             let secret = "Basic ".to_owned() + &base64::encode(p.as_bytes());
             let mut auth_value = header::HeaderValue::from_str(&secret).expect("encode secret");
@@ -481,33 +472,30 @@ impl TransmissionClient {
     }
 
     pub async fn get_session_stats(&self) -> Result<RpcResponse<SessionStats>> {
-        self
-            .execute(json!({
-                 "method": "session-stats"
-            }))
-            .await
+        self.execute(json!({
+             "method": "session-stats"
+        }))
+        .await
     }
 
     pub async fn get_session(&self) -> Result<RpcResponse<Session>> {
-        self
-            .execute(json!({
-                 "method": "session-get",
-                 "arguments": {
-                     "fields": ["download-dir", "version"]
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "session-get",
+             "arguments": {
+                 "fields": ["download-dir", "version"]
+             }
+        }))
+        .await
     }
 
     pub async fn get_free_space(&self, path: &str) -> Result<RpcResponse<FreeSpace>> {
-        self
-            .execute(json!({
-                 "method": "free-space",
-                 "arguments": {
-                     "path": &path
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "free-space",
+             "arguments": {
+                 "path": &path
+             }
+        }))
+        .await
     }
 
     #[allow(dead_code)]
@@ -525,175 +513,160 @@ impl TransmissionClient {
 
     #[allow(dead_code)]
     pub async fn get_torrents(&self, ids: Vec<i64>, fields: &Vec<&str>) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "torrent-get",
-                 "arguments": {
-                   "ids": &ids,
-                   "fields": &fields,
-                   "format": "table"
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "torrent-get",
+             "arguments": {
+               "ids": &ids,
+               "fields": &fields,
+               "format": "table"
+             }
+        }))
+        .await
     }
 
     pub async fn queue_move_top(&self, ids: Vec<i64>) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "queue-move-top",
-                 "arguments": {
-                   "ids": &ids
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "queue-move-top",
+             "arguments": {
+               "ids": &ids
+             }
+        }))
+        .await
     }
 
     pub async fn queue_move_up(&self, ids: Vec<i64>) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "queue-move-top",
-                 "arguments": {
-                   "ids": &ids
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "queue-move-top",
+             "arguments": {
+               "ids": &ids
+             }
+        }))
+        .await
     }
 
     pub async fn queue_move_bottom(&self, ids: Vec<i64>) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "queue-move-bottom",
-                 "arguments": {
-                   "ids": &ids
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "queue-move-bottom",
+             "arguments": {
+               "ids": &ids
+             }
+        }))
+        .await
     }
 
     pub async fn queue_move_down(&self, ids: Vec<i64>) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "queue-move-down",
-                 "arguments": {
-                   "ids": &ids
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "queue-move-down",
+             "arguments": {
+               "ids": &ids
+             }
+        }))
+        .await
     }
 
     pub async fn torrent_start(&self, ids: Vec<i64>) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "torrent-start",
-                 "arguments": {
-                   "ids": &ids
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "torrent-start",
+             "arguments": {
+               "ids": &ids
+             }
+        }))
+        .await
     }
 
     pub async fn torrent_start_now(&self, ids: Vec<i64>) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "torrent-start-now",
-                 "arguments": {
-                   "ids": &ids
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "torrent-start-now",
+             "arguments": {
+               "ids": &ids
+             }
+        }))
+        .await
     }
 
     pub async fn torrent_stop(&self, ids: Vec<i64>) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "torrent-stop",
-                 "arguments": {
-                   "ids": &ids
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "torrent-stop",
+             "arguments": {
+               "ids": &ids
+             }
+        }))
+        .await
     }
 
     pub async fn torrent_verify(&self, ids: Vec<i64>) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "torrent-verify",
-                 "arguments": {
-                   "ids": &ids
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "torrent-verify",
+             "arguments": {
+               "ids": &ids
+             }
+        }))
+        .await
     }
 
     pub async fn torrent_reannounce(&self, ids: Vec<i64>) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "torrent-reannounce",
-                 "arguments": {
-                   "ids": &ids
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "torrent-reannounce",
+             "arguments": {
+               "ids": &ids
+             }
+        }))
+        .await
     }
 
     pub async fn torrent_remove(&self, ids: Vec<i64>, delete_local_data: bool) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "torrent-remove",
-                 "arguments": {
-                   "ids": &ids,
-                   "delete-local-data": delete_local_data
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "torrent-remove",
+             "arguments": {
+               "ids": &ids,
+               "delete-local-data": delete_local_data
+             }
+        }))
+        .await
     }
 
     pub async fn torrent_move(&self, ids: Vec<i64>, location: &str, move_data: bool) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "torrent-set-location",
-                 "arguments": {
-                   "ids": &ids,
-                   "location": &location,
-                   "move": move_data
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "torrent-set-location",
+             "arguments": {
+               "ids": &ids,
+               "location": &location,
+               "move": move_data
+             }
+        }))
+        .await
     }
 
     // returnes also removed array of torrent-id numbers of recently-removed torrents.
     pub async fn get_recent_torrents(&self, fields: &Vec<&str>) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "torrent-get",
-                 "arguments": {
-                   "ids": "recently-active",
-                   "fields": &fields,
-                   "format": "table"
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "torrent-get",
+             "arguments": {
+               "ids": "recently-active",
+               "fields": &fields,
+               "format": "table"
+             }
+        }))
+        .await
     }
 
     pub async fn get_all_torrents(&self, fields: &Vec<&str>) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "torrent-get",
-                 "arguments": {
-                   "fields": &fields,
-                   "format": "table"
-                 }
-            }))
-            .await
+        self.execute(json!({
+             "method": "torrent-get",
+             "arguments": {
+               "fields": &fields,
+               "format": "table"
+             }
+        }))
+        .await
     }
 
     pub async fn torrent_add(&self, torrent_add: &TorrentAdd) -> Result<Value> {
-        self
-            .execute(json!({
-                 "method": "torrent-add",
-                 "arguments": &torrent_add
-            }))
-            .await
+        self.execute(json!({
+             "method": "torrent-add",
+             "arguments": &torrent_add
+        }))
+        .await
     }
 
     pub fn set_session_id(&self, session_id: &str) {
@@ -739,9 +712,13 @@ impl TransmissionClient {
                     .await?
             }
             reqwest::StatusCode::FORBIDDEN => return Err(Box::new(HttpError::new("Forbidden.Check your priviledge."))),
-            reqwest::StatusCode::UNAUTHORIZED => return Err(Box::new(HttpError::new("Unauthorized. Please, provide valid username and password."))),
+            reqwest::StatusCode::UNAUTHORIZED => {
+                return Err(Box::new(HttpError::new(
+                    "Unauthorized. Please, provide valid username and password.",
+                )))
+            }
             x if x.is_success() => response,
-            other => return Err(Box::new(HttpError::new(&format!("Code: {}", other))))
+            other => return Err(Box::new(HttpError::new(&format!("Code: {}", other)))),
         };
         let json = response.json().await?;
         //println!("Response body: {:#?}", json);

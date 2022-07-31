@@ -31,7 +31,7 @@ pub fn process_folder(s: &str, base_dir: &str) -> String {
     if s == base_dir {
         s.split('/').last().unwrap_or("<root>").to_string()
     } else {
-    let mut s = s.replace(base_dir, "");
+    let mut s = s.replace(base_dir, ""); // TODO: special case, when base_dir is '/'
     if s.starts_with('/') {
         s = s.strip_prefix('/').expect("prefix").to_string();
     }
@@ -65,6 +65,7 @@ pub fn format_size(i: i64) -> String {
         format!("{:.1}K", i as f64 / 1024.0)
     }
 }
+
 pub fn format_download_speed(i: i64, hide_zero: bool) -> String {
     if hide_zero && i == 0 {
         "".to_string()

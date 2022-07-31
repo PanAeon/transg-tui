@@ -218,6 +218,14 @@ impl Stats {
     }
 }
 
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct Session {
+    #[serde(rename = "download-dir")]
+    pub download_dir: String,
+    pub version: String,
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct SessionStats {
     #[serde(rename = "activeTorrentCount")]
@@ -476,6 +484,17 @@ impl TransmissionClient {
         self
             .execute(json!({
                  "method": "session-stats"
+            }))
+            .await
+    }
+
+    pub async fn get_session(&self) -> Result<RpcResponse<Session>> {
+        self
+            .execute(json!({
+                 "method": "session-get",
+                 "arguments": {
+                     "fields": ["download-dir", "version"]
+                 }
             }))
             .await
     }

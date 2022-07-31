@@ -1,5 +1,5 @@
 use crate::config::{Config, Connection};
-use crate::transmission::{FreeSpace, Result, SessionStats, TorrentAdd, TorrentDetails, TransmissionClient};
+use crate::transmission::{FreeSpace, Result, SessionStats, TorrentAdd, TorrentDetails, TransmissionClient, Session};
 use crate::utils::build_tree;
 use crossterm::event::{self, KeyEvent};
 use lazy_static::lazy_static;
@@ -28,6 +28,7 @@ pub enum TorrentUpdate {
         msg: String,
         details: String,
     },
+    Session(Session)
 }
 
 #[derive(Debug)]
@@ -149,12 +150,13 @@ impl CommandProcessor {
             });
         });
 
-        //let transmission_url = config.connection_string.to_string();
-        //let remote_base_dir = config.remote_base_dir.to_string();
         std::thread::spawn(move || {
             let rt = Runtime::new().expect("can't create runtime");
             rt.block_on(async move {
                 let mut client = TransmissionClient::new(&connection.url, &connection.username, &connection.password);
+                // FIXME: technically incorrect, if client "comes back" after this the app will be
+                // in inconsistent state..
+                let _ = update_session(&client, &update_sender, &mut connection).await;
                 let _ = send_full_update(&client, &update_sender).await;
                 let mut details_id: Option<i64> = None;
                 loop {
@@ -202,6 +204,31 @@ async fn send_full_update(
 
 }
 
+// a bit tricky config synchronization.., still better then Rc<Mutex>..
+async fn update_session(
+    client: &TransmissionClient,
+    update_sender: &mpsc::Sender<TorrentUpdate>,
+    connection: &mut Connection
+    ) -> Result<()> {
+                    let res = client.get_session().await;
+                    if let Err(error) = res {
+                        let _ = update_sender
+                            .send(TorrentUpdate::Err {
+                                msg: "Can't connect to transmission!".to_string(),
+                                details: format!("Please, check connection string and restart the app:\n\n{}",  error),
+                            })
+                            .await;
+                    } else {
+                        let response = res.unwrap();
+                        if connection.download_dir.is_empty() {
+                            connection.download_dir = response.arguments.download_dir.clone();
+                        } 
+                        let _ = update_sender.send(TorrentUpdate::Session(response.arguments)).await;
+                    }
+    Ok(())
+
+}
+
 async fn update_step(
     receiver: &mut mpsc::Receiver<TorrentCmd>,
     update_sender: &mpsc::Sender<TorrentUpdate>,
@@ -219,6 +246,7 @@ async fn update_step(
         TorrentCmd::Reconnect(idx) => {
             *connection = config.connections[idx].clone();
             *client = TransmissionClient::new(&connection.url, &connection.username, &connection.password);
+            let _ = update_session(client, update_sender, connection).await;
             let _ = send_full_update(client, update_sender).await;
             *details_id = None;
 
@@ -243,8 +271,13 @@ async fn update_step(
             let session_stats = Some(stats.arguments);
 
             let free_space = if i % 60 == 0 {
-                let free_space = client.get_free_space(&connection.remote_base_dir).await?;
-                Some(free_space.arguments)
+                // mask an error if for some reason transmission doesn't want to return free space
+                let res = client.get_free_space(&connection.download_dir).await;
+                if let Ok(free_space) = res {
+                   Some(free_space.arguments)
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -276,16 +309,18 @@ async fn update_step(
             let details = client.get_torrent_details(vec![id]).await?; // TODO: what if id is wrong?
             if !details.arguments.torrents.is_empty() {
                 let torrent = &details.arguments.torrents[0];
-                let location = torrent.download_dir.clone();
-                let my_loc = location.replace(&connection.remote_base_dir, &connection.local_base_dir);
-                let me_loc2 = my_loc.clone();
+                let location = if !connection.local_download_dir.is_empty() { 
+                    torrent.download_dir.replace(&connection.download_dir, &connection.local_download_dir)
+                } else {
+                    torrent.download_dir.clone()
+                };
                 let tree = build_tree(&details.arguments.torrents[0].files);
-                let p = my_loc + "/" + &tree[0].path;
+                let p = location.clone() + "/" + &tree[0].path;
 
                 let l = if tree.len() == 1 && fs::read_dir(&p).is_ok() {
                     p
                 } else {
-                    me_loc2
+                    location
                 };
                 let action = config.actions.get(idx).expect("Wrong action index!");
                 let mut cmd_builder = std::process::Command::new(action.cmd.clone());

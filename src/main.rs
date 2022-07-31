@@ -80,7 +80,7 @@ pub fn calculate_folder_keys(app: &mut App, skip_folder: Option<String>) {
     let mut mappings: Vec<(String, char, usize)> = vec![];
 
     folder_items.iter().for_each(|x| {
-        let name = process_folder(x, &app.config.connections[app.connection_idx].remote_base_dir);
+        let name = process_folder(x, &app.config.connections[app.connection_idx].download_dir);
 
         let (i, c) = name
             .chars()
@@ -901,6 +901,11 @@ fn run_app<B: Backend>(
                     app.tree_state = TreeState::default();
                 }
             }
+            Some(TorrentUpdate::Session(session)) => {
+                if app.config.connections[app.connection_idx].download_dir.is_empty() {
+                    app.config.connections[app.connection_idx].download_dir = session.download_dir;
+                } 
+            }
             None => {}
         }
     }
@@ -967,6 +972,8 @@ fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
         //Span::styled(" | Client Mem: ", Style::default()),
         //Span::styled(format_size(app.memory_usage as i64), Style::default().fg(Color::Yellow)),
         Span::styled(" | Free Space: ", Style::default()),
+//        Span::raw(format!("'{}'", app.config.connections[app.connection_idx].remote_base_dir)),
+
         Span::styled(format_size(app.free_space as i64), Style::default().fg(Color::Yellow)),
         Span::styled(" | Up: ", Style::default()),
         Span::styled(
@@ -1300,7 +1307,7 @@ fn render_filters<'a>(
     let mut folder_items: Vec<_> = folders
         .iter()
         .map(|f| {
-            let name = process_folder(f.0, &connection.remote_base_dir);
+            let name = process_folder(f.0, &connection.download_dir);
             if transition == &Transition::Filter {
                 let (_, c, i) = mapping.iter().find(|y| &y.0 == f.0).expect("exist");
                 let (first, second) = utf8_split(&name, *i);
@@ -1569,7 +1576,7 @@ fn move_dialog<B: Backend>(frame: &mut Frame<B>, name: &str, folders: &[(String,
     let items: Vec<_> = folders
         .iter()
         .map(|x| {
-            let name = process_folder(&x.0, &connection.remote_base_dir);
+            let name = process_folder(&x.0, &connection.download_dir);
             let (first, second) = utf8_split(&name, x.2);
             let second: String = second.chars().skip(1).collect();
 

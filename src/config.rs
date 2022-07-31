@@ -25,15 +25,21 @@ pub struct DirMapping {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Connection {
     pub name: String,
+    #[serde(default)]
     pub username: String,
+    #[serde(default)]
     pub password: String,
     pub url: String,
     #[serde(alias = "remote_base_dir")]
-    #[serde(rename = "remote-base-dir")]
-    pub remote_base_dir: String,
+    #[serde(alias = "remote-base-dir")]
+    #[serde(rename = "download-dir")]
+    #[serde(default)]
+    pub download_dir: String,
     #[serde(alias = "local_base_dir")]
-    #[serde(rename = "local-base-dir")]
-    pub local_base_dir: String,
+    #[serde(alias = "local-base-dir")]
+    #[serde(rename = "local-download-dir")]
+    #[serde(default)]
+    pub local_download_dir: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -74,8 +80,8 @@ fn empty_config() -> Config {
         username: String::from(""),
         password: String::from(""),
         url: String::from("http://127.0.0.1:9091/transmission/rpc"),
-        remote_base_dir: "".to_string(),
-        local_base_dir: "".to_string(),
+        download_dir: "".to_string(),
+        local_download_dir: "".to_string(),
         }],
         refresh_interval: 1200,
         actions: vec![],

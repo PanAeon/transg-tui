@@ -45,8 +45,13 @@ name = "NAS"
 username = ""
 password = ""
 url = "http://192.168.1.18:9091/transmission/rpc"
-remote-base-dir = "/var/lib/transmission/downloads"
-local-base-dir = "/run/mount/transmission"
+#
+# optional. explicitly sets transmission's download directory
+# download-dir = "/var/lib/transmission/downloads"
+#
+# optional. Set this if you have remote transmission folder mounted on the local filesystem. 
+# If set, {location} token gets replaced with the local folder.
+local-download-dir = "/run/mount/transmission"
 
 
 [[actions]]

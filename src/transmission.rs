@@ -61,32 +61,35 @@ pub struct TorrentInfo {
 
 impl TorrentInfo {
     pub fn new(json: &Value) -> Self {
+        Self::from_json(json).expect("get torrents response contains invalid number of fields")
+    }
+    pub fn from_json(json: &Value) -> Result<Self> {
         let xs = json.as_array().unwrap();
         if xs.len() < 20 {
-            println!("js array too short");
-            std::process::exit(-1);
-        }
-        TorrentInfo {
-            id: xs[0].as_i64().unwrap(),
-            name: xs[1].as_str().unwrap().to_string(),
-            status: xs[2].as_i64().unwrap().try_into().unwrap(),
-            percent_done: xs[3].as_f64().unwrap(),
-            error: xs[4].as_i64().unwrap(),
-            error_string: xs[5].as_str().unwrap().to_string(),
-            eta: xs[6].as_i64().unwrap(),
-            queue_position: xs[7].as_i64().unwrap(),
-            is_finished: xs[8].as_bool().unwrap(),
-            is_stalled: xs[9].as_bool().unwrap(),
-            metadata_percent_complete: xs[10].as_f64().unwrap(),
-            peers_connected: xs[11].as_i64().unwrap(),
-            rate_download: xs[12].as_i64().unwrap(),
-            rate_upload: xs[13].as_i64().unwrap(),
-            recheck_progress: xs[14].as_f64().unwrap(),
-            size_when_done: xs[15].as_i64().unwrap(),
-            download_dir: xs[16].as_str().unwrap().to_string(),
-            uploaded_ever: xs[17].as_i64().unwrap(),
-            upload_ratio: xs[18].as_f64().unwrap(),
-            added_date: xs[19].as_i64().unwrap(),
+            Err(Box::new(HttpError::new("get torrents response contains invalid number of fields")))
+        } else {
+            Ok(TorrentInfo {
+                id: xs[0].as_i64().unwrap(),
+                name: xs[1].as_str().unwrap().to_string(),
+                status: xs[2].as_i64().unwrap().try_into().unwrap(),
+                percent_done: xs[3].as_f64().unwrap(),
+                error: xs[4].as_i64().unwrap(),
+                error_string: xs[5].as_str().unwrap().to_string(),
+                eta: xs[6].as_i64().unwrap(),
+                queue_position: xs[7].as_i64().unwrap(),
+                is_finished: xs[8].as_bool().unwrap(),
+                is_stalled: xs[9].as_bool().unwrap(),
+                metadata_percent_complete: xs[10].as_f64().unwrap(),
+                peers_connected: xs[11].as_i64().unwrap(),
+                rate_download: xs[12].as_i64().unwrap(),
+                rate_upload: xs[13].as_i64().unwrap(),
+                recheck_progress: xs[14].as_f64().unwrap(),
+                size_when_done: xs[15].as_i64().unwrap(),
+                download_dir: xs[16].as_str().unwrap().to_string(),
+                uploaded_ever: xs[17].as_i64().unwrap(),
+                upload_ratio: xs[18].as_f64().unwrap(),
+                added_date: xs[19].as_i64().unwrap(),
+            })
         }
     }
     pub fn update(&mut self, xs: &[Value]) {
@@ -682,9 +685,6 @@ impl TransmissionClient {
     where
         R: DeserializeOwned + std::fmt::Debug,
     {
-        // TODO: well, it doesn't matter here because TorrentClient is behind a channel, so it's
-        // not really concurrent. But if so, how to tell rust it is OK to mutate hmm
-
         let response = self
             .client
             .post(&self.url)
@@ -711,7 +711,7 @@ impl TransmissionClient {
                     .send()
                     .await?
             }
-            reqwest::StatusCode::FORBIDDEN => return Err(Box::new(HttpError::new("Forbidden.Check your priviledge."))),
+            reqwest::StatusCode::FORBIDDEN => return Err(Box::new(HttpError::new("Forbidden. Check your priviledge."))),
             reqwest::StatusCode::UNAUTHORIZED => {
                 return Err(Box::new(HttpError::new(
                     "Unauthorized. Please, provide valid username and password.",
@@ -720,8 +720,16 @@ impl TransmissionClient {
             x if x.is_success() => response,
             other => return Err(Box::new(HttpError::new(&format!("Code: {}", other)))),
         };
-        let json = response.json().await?;
-        //println!("Response body: {:#?}", json);
-        serde_json::from_value(json).map_err(From::from)
+        let json : Value = response.json().await?;
+        let res = json
+            .get("result")
+            .cloned()
+            .unwrap_or_else(|| Value::String(String::from("field result is missing")));
+        let res =  res.as_str().unwrap_or( "field result has incompatible type");
+        if res == "success" {
+            serde_json::from_value::<R>(json).map_err(From::from)
+        } else {
+            Err(Box::new(HttpError::new(&format!("Method failed, result: '{}'", res))))
+        }
     }
 }

@@ -192,6 +192,8 @@ impl App<'_> {
     }
 }
 
+// TODO: min size 67 x 20, then super-min-size.
+// then we need name, size, done, up, down
 fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: App,
@@ -205,7 +207,7 @@ fn run_app<B: Backend>(
             Some(TorrentUpdate::UiTick) => {}
             Some(TorrentUpdate::Err { msg, details }) => {
                 if app.err.is_none() {
-                    // keep first error, may be bad in general, but should do for now
+                    // FIXME: poor keep first error, may be bad in general, but should do for now
                     app.err = Some((msg, details));
                 }
             }
@@ -803,7 +805,6 @@ fn run_app<B: Backend>(
                     if app.upload_data.len() > 200 {
                         app.upload_data.pop();
                     }
-                    // TODO: poor, need to use enum here...
                     if app.config.traffic_monitor == TrafficMonitorOptions::Download {
                         app.upload_data.insert(0, s.download_speed);
                     } else {
@@ -814,7 +815,6 @@ fn run_app<B: Backend>(
                 if let Some(s) = free_space_opt {
                     app.free_space = s.size_bytes;
                 }
-                //app.memory_usage = mem;
 
                 let removed: Vec<i64> = removed
                     .as_array()
@@ -836,7 +836,8 @@ fn run_app<B: Backend>(
                     if let Some(y) = app.torrents.get_mut(&id) {
                         y.update(ys);
                     } else {
-                        app.torrents.insert(id, TorrentInfo::new(x));
+                        let info = TorrentInfo::from_json(x).map_err(|r| std::io::Error::new(std::io::ErrorKind::Other, r))?;
+                        app.torrents.insert(id, info);
                     }
                 }
                 app.num_active = xs.len() - 1;

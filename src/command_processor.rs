@@ -265,13 +265,8 @@ async fn update_step(
             let session_stats = Some(stats.arguments);
 
             let free_space = if i % 60 == 0 {
-                // mask an error if for some reason transmission doesn't want to return free space
-                let res = client.get_free_space(&connection.download_dir).await;
-                if let Ok(free_space) = res {
+                let free_space = client.get_free_space(&connection.download_dir).await?;
                     Some(free_space.arguments)
-                } else {
-                    None
-                }
             } else {
                 None
             };

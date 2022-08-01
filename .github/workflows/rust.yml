@@ -39,4 +39,3 @@ jobs:
       with:
         name: transg-tui-${{ runner.os }}
         path: target/release/transgression-tui*
-        retention-days: 5

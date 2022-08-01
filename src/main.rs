@@ -691,7 +691,7 @@ fn run_app<B: Backend>(
                                 {
                                     if let Some((f, _, _)) = app.folder_mapping.iter().find(|y| y.1 == c) {
                                         sender
-                                            .blocking_send(TorrentCmd::Move(vec![x.id], f.to_string(), false))
+                                            .blocking_send(TorrentCmd::Move(vec![x.id], f.to_string(), true))
                                             .expect("should send");
                                         app.transition = Transition::MainScreen;
                                     }

@@ -620,6 +620,11 @@ fn help_dialog<'a>() -> Paragraph<'a> {
     ])
 }
 
+fn format_tracker_url(s :&str) -> String {
+    let s = s.strip_prefix("https://").unwrap_or(s);
+    let s = s.strip_prefix("http://").unwrap_or(s);
+    s.chars().take_while(|x| x != &'/').collect()
+}
 fn render_details(details: &TorrentDetails) -> Table {
     let key_style = Style::default().fg(Color::LightBlue);
     let value_style = Style::default().fg(Color::Gray);
@@ -635,6 +640,10 @@ fn render_details(details: &TorrentDetails) -> Table {
         Row::new(vec![
             Cell::from(Span::styled("Priority", key_style)),
             Cell::from(Span::styled(format!("{}", details.priority), value_style)),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("First tracker:", key_style)),
+            Cell::from(Span::styled(details.trackers.first().map_or(String::from(""), |t| format_tracker_url(&t.announce)), value_style)),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("Completed At:", key_style)),

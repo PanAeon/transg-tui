@@ -108,12 +108,12 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
         Transition::Files => {
             let pets_chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
                 .split(chunks[1]);
             if let Some(details) = &app.details {
                 let details_frame = render_details(details);
 
-                let area = centered_rect(90, 60, pets_chunks[0]);
+                let area = centered_rect(90, 90, pets_chunks[0]);
                 frame.render_widget(details_frame, area);
 
                 let block = draw_tree(app.tree_items.clone());

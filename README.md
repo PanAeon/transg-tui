@@ -39,6 +39,9 @@ Example config:
 refresh_interval = 1200
 # one of: "upload" "donwload" "none"
 traffic-monitor = "upload"
+# true/false show file icons, nerdfont is required
+show-icons = true
+
 
 [[connections]]
 name = "NAS"
@@ -65,16 +68,29 @@ description = "terminal"
 shortcut = "t"
 cmd = "swaymsg"
 args = ["exec", "--", "alacritty", "--working-directory", "\"{location}\""]
+
+# Actions for individual files
+[[file-actions]]
+description = "open"
+shortcut = "o"
+cmd = "swaymsg"
+args = ["exec", "--", "handlr", "open", "\"{location}\""]
+[[file-actions]]
+description = "copy path to clipboard"
+shortcut = "c"
+cmd = "wl-copy"
+args = [ "{location}" ]
 ```
 
 Substitutions:
 
-|  Token            | Description                                                          |
-| ----------------- | -------------------------------------------------------------------- |
-|  `{location}`     | If torrent contains a folder then this folder else its download dir  |
-|  `{id}`           | Torrent's id                                                         |
-|  `{download_dir}` | Download directory                                                   |
-|  `{name}`         | Torrent's name                                                       |
+|  Token                 | Description                                                          |
+| -----------------      | -------------------------------------------------------------------- |
+|  `{location}`          | If torrent contains a folder then this folder else its download dir. |
+|  `{id}`                | Torrent's id                                                         |
+|  `{download_dir}`      | Download directory                                                   |
+|  `{name}`              | Torrent's name                                                       |
+|  `{remote_location}`   | **Files** only. Remote file location.                                |
 
 ## Keybindings
 

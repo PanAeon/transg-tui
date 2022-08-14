@@ -14,7 +14,7 @@ use tui::{
 
 use crate::utils::{
     format_download_speed, format_eta, format_percent_done, format_size, format_status, format_time, process_folder,
-    utf8_split,
+    utf8_split, find_file_position,
 };
 use tui_tree_widget::{Tree, TreeItem};
 
@@ -208,19 +208,18 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
             let title = app.details.as_ref().map_or_else(
                 || "".to_string(),
                 |d| {
-                    // FIXME: should use cached value...
-                    // same mechanism as in the main.rs
-                    app.tree_state.selected().last().map_or_else( 
-                        || "".to_string(), 
-                        |i| {
-                            let name = &d.files[*i].name;
-                    if name.len() > 25 {
-                        let skip = name.len() - 25;
-                        "\n ...".to_owned() + &name.chars().skip(skip).collect::<String>()
+                    if let Some(file_idx) = find_file_position(&app.tree_state.selected(), &app.tree_index) {
+                        d.files.get(file_idx).map(|f| {
+                    if f.name.len() > 25 {
+                        let skip = f.name.len() - 25;
+                        "\n ...".to_owned() + &f.name.chars().skip(skip).collect::<String>()
                     } else {
-                        "\n ...".to_owned() + name
+                        "\n ...".to_owned() + &f.name
                     }
-                        })
+                        }).unwrap_or_else(|| "".to_string())
+                    } else {
+                        "".to_string()
+                    }
                 },
             );
             let status = Paragraph::new(title)

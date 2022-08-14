@@ -1,5 +1,6 @@
 mod command_processor;
 mod config;
+mod icons;
 mod torrent_stats;
 mod transmission;
 mod ui;
@@ -23,7 +24,7 @@ use tui::{
     Terminal,
 };
 use tui_tree_widget::{flatten, get_identifier_without_leaf, TreeItem, TreeState};
-use utils::{build_file_tree, process_folder};
+use utils::{build_file_tree, build_file_tree_index, find_file_position, process_folder, FileIdx};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Filter {
@@ -49,6 +50,7 @@ pub enum Transition {
     Find(bool, usize),
     ChooseSortFunc,
     Connection,
+    FileAction,
 }
 
 impl Transition {
@@ -123,6 +125,7 @@ pub struct App<'a> {
     pub tree_state: TreeState,
     pub details: Option<TorrentDetails>,
     pub tree_items: Vec<TreeItem<'a>>,
+    pub tree_index: Vec<FileIdx>,
     pub config: Config,
     pub err: Option<(String, String)>,
     pub sort_func: SortFunction,
@@ -146,6 +149,7 @@ impl App<'_> {
         self.num_active = 0;
         self.input = "".to_string();
         self.tree_state = TreeState::default();
+        self.tree_index = vec![];
         self.details = None;
         self.tree_items = vec![];
         self.err = None;
@@ -179,6 +183,7 @@ impl App<'_> {
             num_active: 0,
             input: "".to_string(),
             tree_state: TreeState::default(),
+            tree_index: vec![],
             details: None,
             tree_items: vec![],
             config,
@@ -298,6 +303,7 @@ fn run_app<B: Backend>(
                                 app.transition = Transition::Files;
                                 app.tree_state = TreeState::default();
                                 open_first_level(&mut app);
+                                move_up_down(&mut app, true);
                             }
                             KeyCode::Char('S') => {
                                 app.transition = Transition::ChooseSortFunc;
@@ -734,6 +740,9 @@ fn run_app<B: Backend>(
                             KeyCode::Enter => app.tree_state.toggle(),
                             KeyCode::Down | KeyCode::Char('j') => move_up_down(&mut app, true),
                             KeyCode::Up | KeyCode::Char('k') => move_up_down(&mut app, false),
+                            KeyCode::Char(' ') => {
+                                app.transition = Transition::FileAction;
+                            }
                             _ => {}
                         },
                         Transition::ChooseSortFunc => match event.code {
@@ -793,6 +802,36 @@ fn run_app<B: Backend>(
                             }
                             _ => {}
                         },
+                        Transition::FileAction => match event.code {
+                            KeyCode::Esc => app.transition = Transition::Files,
+                            KeyCode::Char(c) => {
+                                if let Some(details) = &app.details {
+                                    if let Some(file_idx) =
+                                        find_file_position(&app.tree_state.selected(), &app.tree_index) {
+                                        if let Some(_file) = app.tree_state.selected().first().and_then(|x| details.files.get(*x)) {
+                                            if let Some(idx) = app
+                                                .config
+                                                .file_actions
+                                                .iter()
+                                                .enumerate()
+                                                .find(|x| x.1.shortcut.starts_with(c)) {
+                                                sender
+                                                    .blocking_send(TorrentCmd::FileAction(details.id, idx.0, file_idx))
+                                                    .expect("should send");
+                                                app.transition = Transition::Files;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            /*KeyCode::Char('+') => {}
+                            KeyCode::Char('-') => {}
+                            KeyCode::Char('r') => {}
+                            KeyCode::Char('l') => { /*torrent id, file idx, l/m/h, files-wanted, files-unwanted*/ }
+                            KeyCode::Char('m') => {}
+                            KeyCode::Char('h') => {}*/
+                            _ => {}
+                        },
                     }
                 }
             },
@@ -836,7 +875,8 @@ fn run_app<B: Backend>(
                     if let Some(y) = app.torrents.get_mut(&id) {
                         y.update(ys);
                     } else {
-                        let info = TorrentInfo::from_json(x).map_err(|r| std::io::Error::new(std::io::ErrorKind::Other, r))?;
+                        let info =
+                            TorrentInfo::from_json(x).map_err(|r| std::io::Error::new(std::io::ErrorKind::Other, r))?;
                         app.torrents.insert(id, info);
                     }
                 }
@@ -913,7 +953,8 @@ fn run_app<B: Backend>(
             Some(TorrentUpdate::Details(details)) => {
                 app.details = Some(*details);
                 if let Some(d) = &app.details {
-                    app.tree_items = build_file_tree(&d.files);
+                    app.tree_items = build_file_tree(&d.files, app.config.show_icons);
+                    app.tree_index = build_file_tree_index(&d.files);
                     app.tree_state = TreeState::default();
                 }
             }

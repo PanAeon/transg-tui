@@ -52,6 +52,7 @@ pub enum TorrentCmd {
     AddTorrent(Option<String>, Option<String>, Option<String>, bool), // download dir, filename, metainfo, start_paused
     //PoisonPill,
     Reconnect(usize),
+    FileAction(u64, usize, usize)
 }
 
 lazy_static! {
@@ -386,6 +387,37 @@ async fn update_step(
                 .unwrap()
                 .to_string();
         }
+        TorrentCmd::FileAction(id, action_idx, file_idx) => {
+            let details = client.get_torrent_details(vec![id as i64]).await?; // TODO: what if id is wrong?
+            if !details.arguments.torrents.is_empty() {
+                let torrent = &details.arguments.torrents[0];
+                let location = if !connection.local_download_dir.is_empty() {
+                    torrent
+                        .download_dir
+                        .replace(&connection.download_dir, &connection.local_download_dir)
+                } else {
+                    torrent.download_dir.clone()
+                };
+
+                let l = location + "/" + &details.arguments.torrents[0].files[file_idx].name;
+                let rl = torrent.download_dir.clone() + "/" + &details.arguments.torrents[0].files[file_idx].name;
+                let action = config.file_actions.get(action_idx).expect("Wrong action index!");
+                let mut cmd_builder = std::process::Command::new(action.cmd.clone());
+                for a in &action.args {
+                    let arg = a
+                        .replace("{location}", &l)
+                        .replace("{id}", &torrent.id.to_string())
+                        .replace("{hash}", &torrent.hash_string)
+                        .replace("{download_dir}", &torrent.download_dir)
+                        .replace("{name}", &torrent.name)
+                        .replace("{remote_location}", &rl);
+                    cmd_builder.arg(&arg);
+                }
+                cmd_builder.spawn()?; // TODO: differentiate between different kind of errors
+            }
+        }
     };
     Ok(())
 }
+
+

@@ -22,6 +22,8 @@ pub struct DirMapping {
     pub local_path: String,
 }
 
+fn truth() -> bool { true }
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Connection {
     pub name: String,
@@ -67,10 +69,17 @@ pub struct Config {
     #[serde(rename = "traffic-monitor")]
     #[serde(default)]
     pub traffic_monitor: TrafficMonitorOptions,
+    #[serde(rename = "show-icons")]
+    #[serde(default = "truth")]
+    pub show_icons: bool,
     pub connections: Vec<Connection>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<Action>,
+    #[serde(default)]
+    #[serde(rename = "file-actions")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub file_actions: Vec<Action>,
 }
 
 fn empty_config() -> Config {
@@ -84,7 +93,9 @@ fn empty_config() -> Config {
             local_download_dir: "".to_string(),
         }],
         refresh_interval: 1200,
+        show_icons: true,
         actions: vec![],
+        file_actions: vec![],
         traffic_monitor: TrafficMonitorOptions::Upload,
     }
 }
@@ -114,6 +125,7 @@ pub fn get_or_create_config() -> Result<Config, Box<dyn std::error::Error>> {
     } else {
         let bytes = std::fs::read(&config_path)?; //.unwrap_or_else(|_| panic!("Can't open {:?}", &config_path));
         let config: Config = toml::from_slice(&bytes)?;
+        //println!("{:?}", config);
         Ok(config)
     }
 }

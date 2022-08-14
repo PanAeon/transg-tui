@@ -105,7 +105,7 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
             let area = centered_rect(width, 90, chunks[1]);
             frame.render_widget(help, area);
         }
-        Transition::Files => {
+        Transition::Files | Transition::FileAction => {
             let pets_chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
@@ -192,6 +192,46 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
             frame.render_widget(status, vert_layout[0]);
             frame.render_widget(list, vert_layout[1]);
         }
+        Transition::FileAction => {
+            let block = Block::default().title("File Actions").borders(Borders::ALL);
+            let area_width = if size.width > 120 { 16 } else { 38 };
+            let area = centered_rect(area_width, 42, size);
+            let vert_layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(3), Constraint::Length(15)].as_ref())
+                .split(block.inner(area));
+            //if let Some(details) = &app.details {
+            let details = file_action_menu(&app.config.file_actions);
+            frame.render_widget(Clear, area);
+            frame.render_widget(block, area);
+
+            let title = app.details.as_ref().map_or_else(
+                || "".to_string(),
+                |d| {
+                    // FIXME: should use cached value...
+                    // same mechanism as in the main.rs
+                    app.tree_state.selected().last().map_or_else( 
+                        || "".to_string(), 
+                        |i| {
+                            let name = &d.files[*i].name;
+                    if name.len() > 25 {
+                        let skip = name.len() - 25;
+                        "\n ...".to_owned() + &name.chars().skip(skip).collect::<String>()
+                    } else {
+                        "\n ...".to_owned() + name
+                    }
+                        })
+                },
+            );
+            let status = Paragraph::new(title)
+                .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
+                .wrap(Wrap { trim: false });
+
+            frame.render_widget(status, vert_layout[0]);
+            frame.render_widget(details, vert_layout[1]);
+            //}
+        }
+
         Transition::ConfirmRemove(with_data) => {
             if let Some(x) = app
                 .main_table_state
@@ -437,6 +477,49 @@ fn action_menu(actions: &[Action]) -> List {
     List::new(items)
 }
 
+fn file_action_menu(actions: &[Action]) -> List {
+    let xs: Vec<(&str, &str)> = actions
+        .iter()
+        .map(|x| (x.shortcut.as_str(), x.description.as_str()))
+        .collect();
+
+    /*let mut ys = vec![
+        ("", "───"),
+        ("+", "Download this file"),
+        ("-", "Skip"),
+        ("r", "Rename"),
+        ("l", "Low Priority"),
+        ("m", "Medium Priority"),
+        ("h", "High Priority"),
+    ];
+    xs.append(&mut ys);*/
+    let items: Vec<_> = xs
+        .iter()
+        .map(|x| {
+            let desc = if x.0.is_empty() {
+                "──────────────────────────────────".to_string()
+            } else {
+                "    ".to_owned() + x.1
+            };
+            ListItem::new(Spans::from(vec![
+                if x.0.is_empty() {
+                    Span::raw("─")
+                } else {
+                    Span::raw(" ")
+                },
+                Span::styled(
+                    x.0,
+                    Style::default()
+                        .add_modifier(Modifier::UNDERLINED)
+                        .fg(Color::LightYellow),
+                ),
+                Span::styled(desc, Style::default()),
+            ]))
+        })
+        .collect();
+    List::new(items)
+}
+
 fn error_dialog<'a>(msg: &'a str, details: &'a str) -> Paragraph<'a> {
     let mut lines = vec![
         Spans::from(vec![Span::raw("")]),
@@ -620,10 +703,14 @@ fn help_dialog<'a>() -> Paragraph<'a> {
     ])
 }
 
-fn format_tracker_url(s :&str) -> String {
-    let s = s.strip_prefix("https://").unwrap_or(s);
-    let s = s.strip_prefix("http://").unwrap_or(s);
+fn extract_domain_name(s: &str) -> String {
     s.chars().take_while(|x| x != &'/').collect()
+}
+fn format_tracker_url(s: &str) -> String {
+    s.strip_prefix("https://").map(extract_domain_name)
+        .or_else(|| s.strip_prefix("http://").map(extract_domain_name))
+        .or_else(|| s.strip_prefix("udp://").map(extract_domain_name))
+        .unwrap_or_else(|| "".to_string())
 }
 fn render_details(details: &TorrentDetails) -> Table {
     let key_style = Style::default().fg(Color::LightBlue);
@@ -684,7 +771,7 @@ fn draw_tree(items: Vec<TreeItem>) -> Tree {
                 .bg(Color::LightBlue)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol(">> ")
+        //.highlight_symbol(">> ")
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

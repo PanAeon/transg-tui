@@ -80,6 +80,21 @@ description = "copy path to clipboard"
 shortcut = "c"
 cmd = "wl-copy"
 args = [ "{location}" ]
+
+# Colors, (experimental and subject to change):
+# Both section must be present in the config
+[colors.main]
+text = "Gray"
+highlight = "Magenta"
+highlight-text = "DarkGray"
+text-soft = "Gray"
+text-error = "Red"
+[colors.details]
+text = "Gray"
+highlight = "LightGreen"
+highlight-text = "DarkGray"
+text-soft = "Gray"
+text-error = "Red"
 ```
 
 Substitutions:

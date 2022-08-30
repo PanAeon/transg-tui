@@ -8,7 +8,7 @@ mod utils;
 
 use binary_heap_plus::BinaryHeap;
 use command_processor::{TorrentCmd, TorrentUpdate};
-use config::{Config, TrafficMonitorOptions};
+use config::{Config, TrafficMonitorOptions, Styles, compute_styles};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyCode},
     execute,
@@ -130,6 +130,7 @@ pub struct App<'a> {
     pub err: Option<(String, String)>,
     pub sort_func: SortFunction,
     pub connection_idx: usize,
+    pub styles: Styles
 }
 
 impl App<'_> {
@@ -165,6 +166,7 @@ impl App<'_> {
         let free_space: u64 = 0;
         let stats: SessionStats = SessionStats::empty();
         let groups: TorrentGroupStats = TorrentGroupStats::empty();
+        let styles: Styles = compute_styles(&config);
 
         App {
             transition: Transition::MainScreen,
@@ -193,6 +195,7 @@ impl App<'_> {
                 func: by_date_added,
             },
             connection_idx: 0,
+            styles
         }
     }
 }

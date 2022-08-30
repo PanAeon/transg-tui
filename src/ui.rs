@@ -1,10 +1,10 @@
-use crate::config::{Action, Config, Connection, TrafficMonitorOptions};
+use crate::config::{Action, Config, Connection, TrafficMonitorOptions, Styles};
 use crate::torrent_stats::TorrentGroupStats;
 use crate::transmission::{TorrentDetails, TorrentInfo};
 use tui::{
     backend::Backend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::Modifier,
     text::{Span, Spans},
     widgets::{
         Block, BorderType, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Sparkline, Table, Wrap,
@@ -42,32 +42,33 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
         .split(size);
 
     let status = Paragraph::new(Spans::from(vec![
-        //Span::styled(format!("W: {}, H: {} ", frame.size().width, frame.size().height), Style::default()),
+        //Span::styled(format!("W: {}, H: {} ", frame.size().width, frame.size().height),
+        //app.styles.text),
         Span::styled(
             format!("🔨 {}", app.config.connections[app.connection_idx].name),
-            Style::default(),
+            app.styles.text,
         ),
-        //Span::styled(" | Client Mem: ", Style::default()),
-        //Span::styled(format_size(app.memory_usage as i64), Style::default().fg(Color::Yellow)),
-        Span::styled(" | Free Space: ", Style::default()),
-        Span::styled(format_size(app.free_space as i64), Style::default().fg(Color::Yellow)),
-        Span::styled(" | Up: ", Style::default()),
+        //Span::styled(" | Client Mem: ", app.styles.text),
+        //Span::styled(format_size(app.memory_usage as i64), app.styles.emphasis),
+        Span::styled(" | Free Space: ", app.styles.text),
+        Span::styled(format_size(app.free_space as i64), app.styles.emphasis),
+        Span::styled(" | Up: ", app.styles.text),
         Span::styled(
             format_download_speed(app.stats.upload_speed as i64, false),
-            Style::default().fg(Color::Yellow),
+            app.styles.emphasis,
         ),
-        Span::styled(" | Down: ", Style::default()),
+        Span::styled(" | Down: ", app.styles.text),
         Span::styled(
             format_download_speed(app.stats.download_speed as i64, false),
-            Style::default().fg(Color::Yellow),
+            app.styles.emphasis,
         ),
-        Span::styled(" ", Style::default()),
+        Span::styled(" ", app.styles.text),
     ]))
     .alignment(Alignment::Right)
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .style(Style::default().fg(Color::White))
+            .style(app.styles.text)
             .title("Stats")
             .border_type(BorderType::Plain),
     );
@@ -75,13 +76,13 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
     if app.transition == Transition::Search || app.transition.is_find() {
         let search = Paragraph::new(Spans::from(vec![Span::styled(
             format!("Search: {}▋", app.input),
-            Style::default().fg(Color::Yellow),
+            app.styles.emphasis,
         )]))
         .alignment(Alignment::Left)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .style(Style::default().fg(Color::White))
+                .style(app.styles.text)
                 .title("Search")
                 .border_type(BorderType::Plain),
         );
@@ -93,14 +94,14 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
     let sparkline = Sparkline::default()
         .block(Block::default().borders(Borders::BOTTOM))
         .data(&app.upload_data)
-        .style(Style::default());
+        .style(app.styles.text);
     if app.config.traffic_monitor != TrafficMonitorOptions::None {
         frame.render_widget(sparkline, chunks[0]);
     }
 
     match app.transition {
         Transition::Help => {
-            let help = help_dialog();
+            let help = help_dialog(&app.styles);
             let width = if size.width > 120 { 30 } else { 60 };
             let area = centered_rect(width, 90, chunks[1]);
             frame.render_widget(help, area);
@@ -111,12 +112,12 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
                 .split(chunks[1]);
             if let Some(details) = &app.details {
-                let details_frame = render_details(details);
+                let details_frame = render_details(details, &app.styles);
 
                 let area = centered_rect(90, 90, pets_chunks[0]);
                 frame.render_widget(details_frame, area);
 
-                let block = draw_tree(app.tree_items.clone());
+                let block = draw_tree(app.tree_items.clone(), &app.styles);
                 frame.render_stateful_widget(block, pets_chunks[1], &mut app.tree_state);
             }
         }
@@ -141,8 +142,9 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 &app.folder_mapping,
                 app.num_active,
                 &app.config.connections[app.connection_idx],
+                &app.styles
             );
-            let main_table = render_main_table(&app.left_filter_state, &app.groups, &app.filtered_torrents);
+            let main_table = render_main_table(&app.left_filter_state, &app.groups, &app.filtered_torrents, &app.styles);
 
             if size.width > 120 {
                 frame.render_stateful_widget(filters, pets_chunks[0], &mut app.left_filter_state);
@@ -158,7 +160,7 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
     }
     if let Some((msg, details)) = &app.err {
         let area = centered_rect(36, 40, size);
-        let block = error_dialog(msg, details);
+        let block = error_dialog(msg, details, &app.styles);
         frame.render_widget(Clear, area);
         frame.render_widget(block, area);
     }
@@ -171,7 +173,7 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(3), Constraint::Length(15)].as_ref())
                 .split(block.inner(area));
-            let list = action_menu(&app.config.actions);
+            let list = action_menu(&app.config.actions, &app.styles);
             frame.render_widget(Clear, area);
             frame.render_widget(block, area);
 
@@ -186,7 +188,7 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 },
             );
             let status = Paragraph::new(title)
-                .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
+                .style(app.styles.text.add_modifier(Modifier::BOLD))
                 .wrap(Wrap { trim: false });
 
             frame.render_widget(status, vert_layout[0]);
@@ -201,7 +203,7 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 .constraints([Constraint::Length(3), Constraint::Length(15)].as_ref())
                 .split(block.inner(area));
             //if let Some(details) = &app.details {
-            let details = file_action_menu(&app.config.file_actions);
+            let details = file_action_menu(&app.config.file_actions, &app.styles);
             frame.render_widget(Clear, area);
             frame.render_widget(block, area);
 
@@ -210,8 +212,9 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 |d| {
                     if let Some(file_idx) = find_file_position(&app.tree_state.selected(), &app.tree_index) {
                         d.files.get(file_idx).map(|f| {
-                    if f.name.len() > 25 {
-                        let skip = f.name.len() - 25;
+                    let num_chars = f.name.chars().count();
+                    if num_chars > 25 {
+                        let skip = num_chars - 25;
                         "\n ...".to_owned() + &f.name.chars().skip(skip).collect::<String>()
                     } else {
                         "\n ...".to_owned() + &f.name
@@ -223,7 +226,7 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 },
             );
             let status = Paragraph::new(title)
-                .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
+                .style(app.styles.text.add_modifier(Modifier::BOLD))
                 .wrap(Wrap { trim: false });
 
             frame.render_widget(status, vert_layout[0]);
@@ -238,7 +241,7 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                 .and_then(|x| app.filtered_torrents.get(x))
             {
                 let area = centered_rect(46, 15, size);
-                let block = delete_confirmation_dialog(with_data, &x.name);
+                let block = delete_confirmation_dialog(with_data, &x.name, &app.styles);
                 frame.render_widget(Clear, area);
                 frame.render_widget(block, area);
             }
@@ -254,18 +257,19 @@ pub fn ui<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
                     &x.name,
                     &app.folder_mapping,
                     &app.config.connections[app.connection_idx],
+                    &app.styles
                 );
             }
         }
         Transition::ChooseSortFunc => {
             let area = centered_rect(26, 35, size);
-            let block = choose_sort_dialog();
+            let block = choose_sort_dialog(&app.styles);
             frame.render_widget(Clear, area);
             frame.render_widget(block, area);
         }
         Transition::Connection => {
             let area = centered_rect(26, 35, size);
-            let block = choose_connection(&app.config);
+            let block = choose_connection(&app.config, &app.styles);
             frame.render_widget(Clear, area);
             frame.render_widget(block, area);
         }
@@ -277,6 +281,7 @@ fn render_main_table<'a>(
     _filter_state: &ListState,
     _groups: &TorrentGroupStats,
     torrents: &[TorrentInfo],
+    styles: &Styles
 ) -> Table<'a> {
     let rows: Vec<_> = torrents
         .iter()
@@ -295,25 +300,22 @@ fn render_main_table<'a>(
         .collect();
     let pet_detail = Table::new(rows)
         .highlight_style(
-            Style::default()
-                .bg(Color::Yellow)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
+            styles.highlight
         )
         .header(Row::new(vec![
-            Cell::from(Span::styled(" ", Style::default().add_modifier(Modifier::BOLD))),
-            Cell::from(Span::styled("Name", Style::default().add_modifier(Modifier::BOLD))),
-            Cell::from(Span::styled("Done", Style::default().add_modifier(Modifier::BOLD))),
-            Cell::from(Span::styled("Eta", Style::default().add_modifier(Modifier::BOLD))),
-            Cell::from(Span::styled("Size", Style::default().add_modifier(Modifier::BOLD))),
-            Cell::from(Span::styled("Up", Style::default().add_modifier(Modifier::BOLD))),
-            Cell::from(Span::styled("Down", Style::default().add_modifier(Modifier::BOLD))),
-            Cell::from(Span::styled("Uploaded", Style::default().add_modifier(Modifier::BOLD))),
+            Cell::from(Span::styled(" ", styles.emphasis)),
+            Cell::from(Span::styled("Name", styles.emphasis)),
+            Cell::from(Span::styled("Done", styles.emphasis)),
+            Cell::from(Span::styled("Eta", styles.emphasis)),
+            Cell::from(Span::styled("Size", styles.emphasis)),
+            Cell::from(Span::styled("Up", styles.emphasis)),
+            Cell::from(Span::styled("Down", styles.emphasis)),
+            Cell::from(Span::styled("Uploaded", styles.emphasis)),
         ]))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .style(Style::default().fg(Color::White))
+                .style(styles.text)
                 .title("Darlings")
                 .border_type(BorderType::Plain),
         )
@@ -338,10 +340,11 @@ fn render_filters<'a>(
     mapping: &[(String, char, usize)],
     num_active: usize,
     connection: &Connection,
+    styles: &Styles,
 ) -> List<'a> {
     let filters = Block::default()
         .borders(Borders::ALL)
-        .style(Style::default().fg(Color::White))
+        .style(styles.text)
         .title("Filters")
         .border_type(BorderType::Plain);
     let filter_items = vec![
@@ -369,19 +372,18 @@ fn render_filters<'a>(
                 let second: String = second.chars().skip(1).collect();
                 ListItem::new(Spans::from(vec![
                     Span::raw(" "),
-                    Span::styled(first, Style::default()),
+                    Span::styled(first, styles.text),
                     Span::styled(
                         c.to_string(),
-                        Style::default()
+                        styles.emphasis
                             .add_modifier(Modifier::UNDERLINED)
-                            .fg(Color::LightYellow),
                     ),
-                    Span::styled(format!("{}: {}", second, f.1), Style::default()),
+                    Span::styled(format!("{}: {}", second, f.1), styles.text),
                 ]))
             } else {
                 ListItem::new(Spans::from(vec![Span::styled(
                     format!(" {}: {}", name, f.1),
-                    Style::default(),
+                    styles.text,
                 )]))
             }
         })
@@ -396,19 +398,18 @@ fn render_filters<'a>(
 
                 ListItem::new(Spans::from(vec![
                     Span::raw(" "),
-                    Span::styled(first, Style::default()),
+                    Span::styled(first, styles.text),
                     Span::styled(
                         x.1.to_string(),
-                        Style::default()
+                        styles.emphasis
                             .add_modifier(Modifier::UNDERLINED)
-                            .fg(Color::LightYellow),
                     ),
-                    Span::styled(second, Style::default()),
+                    Span::styled(second, styles.text),
                 ]))
             } else {
                 ListItem::new(Spans::from(vec![
                     Span::raw(" "),
-                    Span::styled(x.0.clone(), Style::default()),
+                    Span::styled(x.0.clone(), styles.text),
                 ]))
             }
         })
@@ -418,16 +419,14 @@ fn render_filters<'a>(
     items.append(&mut folder_items);
 
     let list = List::new(items).block(filters).highlight_style(
-        Style::default()
-            .bg(Color::Yellow)
-            .fg(Color::Black)
+        styles.highlight
             .add_modifier(Modifier::BOLD),
     );
 
     list
 }
 
-fn action_menu(actions: &[Action]) -> List {
+fn action_menu<'a>(actions: &'a [Action], styles: &Styles) -> List<'a> {
     let mut xs: Vec<(&str, &str)> = actions
         .iter()
         .map(|x| (x.shortcut.as_str(), x.description.as_str()))
@@ -465,18 +464,17 @@ fn action_menu(actions: &[Action]) -> List {
                 },
                 Span::styled(
                     x.0,
-                    Style::default()
+                    styles.emphasis
                         .add_modifier(Modifier::UNDERLINED)
-                        .fg(Color::LightYellow),
                 ),
-                Span::styled(desc, Style::default()),
+                Span::styled(desc, styles.text),
             ]))
         })
         .collect();
     List::new(items)
 }
 
-fn file_action_menu(actions: &[Action]) -> List {
+fn file_action_menu<'a>(actions: &'a [Action], styles: &'a Styles) -> List<'a> {
     let xs: Vec<(&str, &str)> = actions
         .iter()
         .map(|x| (x.shortcut.as_str(), x.description.as_str()))
@@ -508,43 +506,41 @@ fn file_action_menu(actions: &[Action]) -> List {
                 },
                 Span::styled(
                     x.0,
-                    Style::default()
+                    styles.emphasis
                         .add_modifier(Modifier::UNDERLINED)
-                        .fg(Color::LightYellow),
                 ),
-                Span::styled(desc, Style::default()),
+                Span::styled(desc, styles.text),
             ]))
         })
         .collect();
     List::new(items)
 }
 
-fn error_dialog<'a>(msg: &'a str, details: &'a str) -> Paragraph<'a> {
+fn error_dialog<'a>(msg: &'a str, details: &'a str, styles: &Styles) -> Paragraph<'a> {
     let mut lines = vec![
         Spans::from(vec![Span::raw("")]),
-        Spans::from(vec![Span::styled("Bloody hell!", Style::default().fg(Color::Red))]),
+        Spans::from(vec![Span::styled("Bloody hell!", styles.error_text)]),
         Spans::from(vec![Span::raw("")]),
-        Spans::from(vec![Span::styled(msg, Style::default().fg(Color::Red))]),
+        Spans::from(vec![Span::styled(msg, styles.error_text)]),
     ];
     for l in details.split('\n') {
-        lines.push(Spans::from(vec![Span::styled(l, Style::default().fg(Color::Gray))]));
+        lines.push(Spans::from(vec![Span::styled(l, styles.blend_in)]));
     }
     let message = Paragraph::new(lines).wrap(Wrap { trim: false }).block(
         Block::default()
             .title("Aarrgh!")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Red)),
+            .border_style(styles.error_text),
     );
     message
 }
 
-fn choose_sort_dialog<'a>() -> Paragraph<'a> {
-    let key_style = Style::default()
-        .add_modifier(Modifier::UNDERLINED)
-        .fg(Color::LightYellow);
+fn choose_sort_dialog(styles: &Styles) -> Paragraph {
+    let key_style = styles.emphasis
+        .add_modifier(Modifier::UNDERLINED);
     let lines = vec![
         Spans::from(vec![Span::raw("")]),
-        Spans::from(vec![Span::styled(" Choose sort function:", Style::default())]),
+        Spans::from(vec![Span::styled(" Choose sort function:", styles.text)]),
         Spans::from(vec![Span::raw("")]),
         Spans::from(vec![
             Span::raw(" By "),
@@ -563,18 +559,17 @@ fn choose_sort_dialog<'a>() -> Paragraph<'a> {
         Block::default()
             .title("Sort")
             .borders(Borders::ALL)
-            .border_style(Style::default()),
+            .border_style(styles.text),
     );
     message
 }
 
-fn choose_connection<'a>(config: &Config) -> Paragraph<'a> {
-    let key_style = Style::default()
-        .add_modifier(Modifier::UNDERLINED)
-        .fg(Color::LightYellow);
+fn choose_connection<'a>(config: &Config, styles: &'a Styles) -> Paragraph<'a> {
+    let key_style = styles.emphasis
+        .add_modifier(Modifier::UNDERLINED);
     let mut lines = vec![
         Spans::from(vec![Span::raw("")]),
-        Spans::from(vec![Span::styled(" Choose connection:", Style::default())]),
+        Spans::from(vec![Span::styled(" Choose connection:", styles.text)]),
         Spans::from(vec![Span::raw("")]),
     ];
     for (i, x) in config.connections.iter().enumerate() {
@@ -589,23 +584,23 @@ fn choose_connection<'a>(config: &Config) -> Paragraph<'a> {
         Block::default()
             .title("Connections")
             .borders(Borders::ALL)
-            .border_style(Style::default()),
+            .border_style(styles.text),
     );
     message
 }
 
-fn delete_confirmation_dialog(with_data: bool, name: &str) -> Paragraph {
+fn delete_confirmation_dialog<'a>(with_data: bool, name: &'a str, styles: &Styles) -> Paragraph<'a> {
     let block = Block::default().title("Confirm").borders(Borders::ALL);
     let message = Paragraph::new(Spans::from(vec![
-        Span::styled("Sure to remove '", Style::default()),
-        Span::styled(name, Style::default().fg(Color::Gray)),
-        Span::styled("'", Style::default()),
+        Span::styled("Sure to remove '", styles.text),
+        Span::styled(name, styles.blend_in),
+        Span::styled("'", styles.text),
         if with_data {
-            Span::styled(" with all its data?", Style::default().fg(Color::Red))
+            Span::styled(" with all its data?", styles.error_text)
         } else {
             Span::raw("?")
         },
-        Span::styled("[y/n]", Style::default()),
+        Span::styled("[y/n]", styles.text),
     ]))
     .wrap(Wrap { trim: false })
     .block(block);
@@ -616,9 +611,10 @@ fn move_dialog<B: Backend>(
     name: &str,
     folders: &[(String, char, usize)],
     connection: &Connection,
+    styles: &Styles
 ) {
     let size = frame.size();
-    let title = Paragraph::new(Spans::from(vec![Span::styled(name, Style::default().fg(Color::Gray))]))
+    let title = Paragraph::new(Spans::from(vec![Span::styled(name, styles.blend_in)]))
         .wrap(Wrap { trim: false });
 
     let items: Vec<_> = folders
@@ -629,14 +625,13 @@ fn move_dialog<B: Backend>(
             let second: String = second.chars().skip(1).collect();
 
             ListItem::new(Spans::from(vec![
-                Span::styled(first, Style::default()),
+                Span::styled(first, styles.text),
                 Span::styled(
                     x.1.to_string(),
-                    Style::default()
+                    styles.emphasis
                         .add_modifier(Modifier::UNDERLINED)
-                        .fg(Color::LightYellow),
                 ),
-                Span::styled(second, Style::default()),
+                Span::styled(second, styles.text),
             ]))
         })
         .collect();
@@ -656,14 +651,14 @@ fn move_dialog<B: Backend>(
     frame.render_widget(folder_list, vert_layout[1]);
 }
 
-fn help_dialog<'a>() -> Paragraph<'a> {
-    let bold = Style::default().add_modifier(Modifier::BOLD);
-    let gray = Style::default().fg(Color::Gray);
+fn help_dialog<'a>(styles: &Styles) -> Paragraph<'a> {
+    let bold = styles.bold;
+    let gray = styles.blend_in;
     Paragraph::new(vec![
         Spans::from(vec![Span::raw("")]),
         Spans::from(vec![Span::styled(
             "Transgression TUI",
-            Style::default().fg(Color::LightBlue),
+            styles.details_emphasis,
         )]),
         Spans::from(""),
         Spans::from(vec![Span::styled("↑ / k    ", bold), Span::styled("Prev item", gray)]),
@@ -711,9 +706,9 @@ fn format_tracker_url(s: &str) -> String {
         .or_else(|| s.strip_prefix("udp://").map(extract_domain_name))
         .unwrap_or_else(|| "".to_string())
 }
-fn render_details(details: &TorrentDetails) -> Table {
-    let key_style = Style::default().fg(Color::LightBlue);
-    let value_style = Style::default().fg(Color::Gray);
+fn render_details<'a>(details: &'a TorrentDetails, styles: &Styles) -> Table<'a> {
+    let key_style = styles.details_emphasis;
+    let value_style = styles.blend_in;
     let rows = vec![
         Row::new(vec![
             Cell::from(Span::styled("Name:", key_style)),
@@ -761,14 +756,11 @@ fn render_details(details: &TorrentDetails) -> Table {
         .column_spacing(1)
 }
 
-fn draw_tree(items: Vec<TreeItem>) -> Tree {
+fn draw_tree<'a>(items: Vec<TreeItem<'a>>, styles: &Styles) -> Tree<'a> {
     Tree::new(items)
         .block(Block::default().borders(Borders::ALL).title("Files"))
         .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::LightBlue)
-                .add_modifier(Modifier::BOLD),
+            styles.details_highlight
         )
         //.highlight_symbol(">> ")
 }

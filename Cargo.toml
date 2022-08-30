@@ -29,3 +29,4 @@ bit-vec = "0.6.3"
 tokio = { version = "1.18.0", features = [ "full" ]}
 binary-heap-plus = "0.4.1"
 tui-tree-widget = "0.9.0"
+terminal-light = "1.0.0"

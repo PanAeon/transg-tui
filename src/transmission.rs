@@ -338,7 +338,7 @@ static TORRENT_DETAILS_FIELDS: &[&str] = &[
     "files",
     "fileStats",
     "priorities",
-    "wanted",
+    //"wanted",
     "peers",
     "peer",
     "trackers",
@@ -397,7 +397,7 @@ pub struct TorrentDetails {
     #[serde(rename = "fileStats")]
     pub file_stats: Vec<FileStats>,
     pub priorities: Vec<u8>,
-    pub wanted: Vec<u8>,
+    //pub wanted: Vec<bool>,
     pub peers: Vec<Peer>,
     pub trackers: Vec<Tracker>,
     #[serde(rename = "trackerStats")]
@@ -727,7 +727,19 @@ impl TransmissionClient {
             .unwrap_or_else(|| Value::String(String::from("field result is missing")));
         let res =  res.as_str().unwrap_or( "field result has incompatible type");
         if res == "success" {
-            serde_json::from_value::<R>(json).map_err(From::from)
+            //serde_json::from_value::<R>(json).map_err(From::from)
+            serde_json::from_value::<R>(json).map_err(|x| {
+                // TODO: make this configurable, extend with normal loggin method
+                //use std::fs::File;
+                //use std::io::Write;
+                //let mut file = File::create("out.json").unwrap();
+
+    // Write a &str in the file (ignoring the result).
+    //writeln!(&mut file, "{:#}", json).unwrap();
+               // println!("{:#}", json);
+              //  panic!("boo")
+                From::from(x)
+            })
         } else {
             Err(Box::new(HttpError::new(&format!("Method failed, result: '{}'", res))))
         }

@@ -51,7 +51,7 @@
               fetchSubmodules = true;
             };*/
 
-            cargoSha256 = "sha256-kMmHp+pjeTN5qD2cjrNr+14b3HJaD84Y8xydkaEJBak=";
+            cargoSha256 = "sha256-zwK5QKZ9DZhHKm131iWDJ3xlZOu5OcaXo+Cp12RptKw=";
 
             nativeBuildInputs = [ pkg-config ];
             buildInputs = [

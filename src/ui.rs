@@ -719,10 +719,6 @@ fn render_details<'a>(details: &'a TorrentDetails, styles: &Styles) -> Table<'a>
             Cell::from(Span::styled(format_size(details.size_when_done as i64), value_style)),
         ]),
         Row::new(vec![
-            Cell::from(Span::styled("Priority", key_style)),
-            Cell::from(Span::styled(format!("{}", details.priority), value_style)),
-        ]),
-        Row::new(vec![
             Cell::from(Span::styled("First tracker:", key_style)),
             Cell::from(Span::styled(details.trackers.first().map_or(String::from(""), |t| format_tracker_url(&t.announce)), value_style)),
         ]),

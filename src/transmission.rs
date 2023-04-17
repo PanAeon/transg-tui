@@ -316,8 +316,6 @@ static TORRENT_DETAILS_FIELDS: &[&str] = &[
     "name",
     "eta",
     "sizeWhenDone",
-    "seederCount",
-    "leecherCount",
     "downloadDir",
     "comment",
     "hashString",
@@ -325,7 +323,6 @@ static TORRENT_DETAILS_FIELDS: &[&str] = &[
     "rateUpload",
     "uploadRatio",
     "seedRatioLimit",
-    "priority",
     "doneDate",
     "percentDone",
     "downloadedEver",
@@ -357,10 +354,6 @@ pub struct TorrentDetails {
     pub eta: i64,
     #[serde(rename = "sizeWhenDone")]
     pub size_when_done: u64,
-    #[serde(rename = "seederCount")]
-    pub seeder_count: i64,
-    #[serde(rename = "leecherCount")]
-    pub leecher_count: i64,
     #[serde(deserialize_with = "status_deserializer")]
     pub status: TorrentStatus,
     #[serde(rename = "downloadDir")]
@@ -377,8 +370,6 @@ pub struct TorrentDetails {
     pub upload_ratio: f64,
     #[serde(rename = "seedRatioLimit")]
     pub seed_ratio_limit: u64,
-    #[serde(rename = "priority")]
-    pub priority: u64,
     #[serde(rename = "doneDate")]
     pub done_date: u64,
     #[serde(rename = "percentDone")]

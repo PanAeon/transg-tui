@@ -387,7 +387,7 @@ pub struct TorrentDetails {
     pub files: Vec<File>,
     #[serde(rename = "fileStats")]
     pub file_stats: Vec<FileStats>,
-    pub priorities: Vec<u8>,
+    pub priorities: Vec<i8>,
     //pub wanted: Vec<bool>,
     pub peers: Vec<Peer>,
     pub trackers: Vec<Tracker>,

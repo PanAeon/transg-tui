@@ -369,7 +369,7 @@ pub struct TorrentDetails {
     #[serde(rename = "uploadRatio")]
     pub upload_ratio: f64,
     #[serde(rename = "seedRatioLimit")]
-    pub seed_ratio_limit: u64,
+    pub seed_ratio_limit: f64,
     #[serde(rename = "doneDate")]
     pub done_date: u64,
     #[serde(rename = "percentDone")]

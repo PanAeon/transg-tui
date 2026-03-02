@@ -275,13 +275,13 @@ pub struct FileStats {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct TrackerStats {
-    #[serde(rename = "leecherCount")]
-    pub leecher_count: i64,
+    // #[serde(rename = "leecherCount")]
+    // pub leecher_count: i64,
     pub id: u64,
     pub host: String,
     pub scrape: String,
-    #[serde(rename = "seederCount")]
-    pub seeder_count: i64,
+    // #[serde(rename = "seederCount")]
+    // pub seeder_count: i64,
     #[serde(rename = "lastAnnouncePeerCount")]
     pub last_announce_peer_count: u64,
     #[serde(rename = "lastAnnounceResult")]
@@ -721,16 +721,17 @@ impl TransmissionClient {
             //serde_json::from_value::<R>(json).map_err(From::from)
             serde_json::from_value::<R>(json).map_err(|x| {
                 // TODO: make this configurable, extend with normal loggin method
-                //use std::fs::File;
-                //use std::io::Write;
-                //let mut file = File::create("out.json").unwrap();
+                // use std::fs::File;
+                // use std::io::Write;
+                // let mut file = File::create("out.json").unwrap();
+                // let json = json.clone();
 
     // Write a &str in the file (ignoring the result).
-    //writeln!(&mut file, "{:#}", json).unwrap();
-               // println!("{:#}", json);
-              //  panic!("boo")
-                From::from(x)
-            })
+    // writeln!(&mut file, "{:#}", json).unwrap();
+    //             println!("{:#}", json);
+    //             panic!("boo")
+                 From::from(x)
+             })
         } else {
             Err(Box::new(HttpError::new(&format!("Method failed, result: '{}'", res))))
         }

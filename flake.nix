@@ -31,7 +31,7 @@
               #curl
             ];
             LIBCLANG_PATH = pkgs.lib.makeLibraryPath
-              [ pkgs.llvmPackages_latest.libclang.lib ];
+              [ pkgs.llvmPackages.libclang.lib ];
             PKG_CONFIG_PATH =
               "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.libxml2.dev}/lib/pkgconfig";
             shellHook = "exec fish";
@@ -51,7 +51,7 @@
               fetchSubmodules = true;
             };*/
 
-            cargoHash = "sha256-zwK5QKZ9DZhHKm131iWDJ3xlZOu5OcaXo+Cp12RptKw=";
+            cargoHash = "sha256-3YqcYiFkEMJXvvfJurGUg9tRd8Bv93afUSsImqayFL4=";
 
             nativeBuildInputs = [ pkg-config ];
             buildInputs = [
